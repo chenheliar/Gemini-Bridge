@@ -19,8 +19,8 @@
     "lint:web": "eslint --config web/eslint.config.js web/src",
     "start": "node dist/server.js",
     "start:desktop": "npm run build && electron .",
-    "pack:win": "npm run build && electron-builder --win nsis",
-    "pack:mac": "npm run build && electron-builder --mac"
+    "pack:win": "npm run build && electron-builder --win nsis --publish never",
+    "pack:mac": "npm run build && electron-builder --mac --publish never"
   },
   "keywords": [
     "gemini",
