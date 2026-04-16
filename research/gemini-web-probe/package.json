@@ -1,0 +1,15 @@
+{
+  "name": "gemini-web-probe",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Isolated Gemini Web traffic probe for reverse-engineering browser-native request paths.",
+  "scripts": {
+    "probe": "node src/probe.mjs",
+    "probe:send": "node src/probe.mjs --send",
+    "analyze": "node src/analyze-artifact.mjs"
+  },
+  "dependencies": {
+    "puppeteer-core": "^24.7.1"
+  }
+}

@@ -1,0 +1,29 @@
+[
+  {
+    "name": "__Secure-1PSID",
+    "value": "paste-your-value",
+    "domain": ".google.com",
+    "path": "/",
+    "secure": true,
+    "httpOnly": true,
+    "sameSite": "no_restriction"
+  },
+  {
+    "name": "__Secure-1PSIDTS",
+    "value": "paste-your-value",
+    "domain": ".google.com",
+    "path": "/",
+    "secure": true,
+    "httpOnly": true,
+    "sameSite": "no_restriction"
+  },
+  {
+    "name": "__Secure-1PSIDCC",
+    "value": "optional",
+    "domain": ".google.com",
+    "path": "/",
+    "secure": true,
+    "httpOnly": true,
+    "sameSite": "no_restriction"
+  }
+]

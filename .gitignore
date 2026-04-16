@@ -1,0 +1,47 @@
+# dependencies
+node_modules/
+web/node_modules/
+
+# build output
+dist/
+release/
+web/dist/
+
+# runtime data
+data/
+cookies.json
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# local logs and temp files
+logs/
+*.log
+.tmp-*.log
+tmp_server_snapshot.txt
+diagnose-result.json
+
+# local research temp data
+research/**/.tmp/
+research/**/artifacts/
+
+# local app and editor files
+*.local
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# local assistant / workspace files
+.impeccable.md
+.workbuddy
+.workbuddy/
+.playwright-cli
+.playwright-cli/
