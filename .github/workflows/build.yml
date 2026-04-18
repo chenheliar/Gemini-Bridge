@@ -83,7 +83,9 @@ jobs:
 
       - name: Resolve version
         id: version
-        run: echo "value=v$(node -p \"require('./package.json').version\")" >> "$GITHUB_OUTPUT"
+        run: |
+          VERSION=$(node -e "console.log(require('./package.json').version)")
+          echo "value=v$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Download build artifacts
         uses: actions/download-artifact@v4
