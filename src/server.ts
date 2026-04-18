@@ -78,6 +78,14 @@ const refusalCircuit = new Map<string, RefusalCircuitState>();
 let activeListenHost = "127.0.0.1";
 let activeListenPort = 3100;
 
+function measureUtf8Bytes(value: string): number {
+  return Buffer.byteLength(value, "utf8");
+}
+
+function measureJsonBytes(value: unknown): number {
+  return measureUtf8Bytes(JSON.stringify(value));
+}
+
 function formatZodError(error: ZodError): string {
   return error.issues
     .map((issue) => {
@@ -419,6 +427,12 @@ app.post("/v1/chat/completions", async (req, res, next) => {
   let conversationLog: ConversationLog | null = null;
   let promptText = "";
   let promptFingerprint: string | null = null;
+  let requestBytes = 0;
+  let responseBytes = 0;
+  let trafficTracked = false;
+  let trackedModelName: string | null = null;
+  let trackedStream = false;
+  let trackedPromptTokens: number | null = null;
 
   try {
     let body;
@@ -431,7 +445,10 @@ app.post("/v1/chat/completions", async (req, res, next) => {
       throw error;
     }
     const messages = body.messages as Array<Record<string, unknown>>;
+    requestBytes = measureJsonBytes(body);
     const modelName = resolveRequestedModel(body.model, new Set(manager.getModels()));
+    trackedModelName = modelName;
+    trackedStream = !!body.stream;
     const anchor = manager.getAnchor();
     const activeAnchorSourcePath = anchor.valid ? anchor.sourcePath : null;
     const sessionKey = resolveSessionKey(req, body as Record<string, unknown>);
@@ -448,9 +465,11 @@ app.post("/v1/chat/completions", async (req, res, next) => {
       memory: Array.isArray(memory) ? null : memory,
     });
     promptText = promptBuild.promptText;
+    trackedPromptTokens = approxTokens(promptText);
     promptFingerprint = createPromptFingerprint(modelName, activeAnchorSourcePath, promptBuild.sourcePromptText);
     const client = await manager.ensureClient();
     manager.markRequest();
+    trafficTracked = true;
     const generationProfile = resolveGenerationProfile(!!body.stream, sessionKey);
     const circuitState = getCircuitState(promptFingerprint);
     if (circuitState?.cooldownUntil && circuitState.cooldownUntil > Date.now()) {
@@ -510,7 +529,12 @@ app.post("/v1/chat/completions", async (req, res, next) => {
       res.setHeader("Connection", "keep-alive");
       res.flushHeaders();
 
-      res.write(
+      const writeSse = (payload: string) => {
+        responseBytes += measureUtf8Bytes(payload);
+        res.write(payload);
+      };
+
+      writeSse(
         `data: ${JSON.stringify(
           buildChatCompletionChunk({
             responseId,
@@ -534,7 +558,7 @@ app.post("/v1/chat/completions", async (req, res, next) => {
           continue;
         }
 
-        res.write(
+        writeSse(
           `data: ${JSON.stringify(
             buildChatCompletionChunk({
               responseId,
@@ -576,7 +600,7 @@ app.post("/v1/chat/completions", async (req, res, next) => {
         conversationLog.memoryTurns = nextMemory.totalTurns;
       }
 
-      res.write(
+      writeSse(
         `data: ${JSON.stringify(
           buildChatCompletionChunk({
             responseId,
@@ -587,7 +611,7 @@ app.post("/v1/chat/completions", async (req, res, next) => {
           }),
         )}\n\n`,
       );
-      res.write("data: [DONE]\n\n");
+      writeSse("data: [DONE]\n\n");
       res.end();
     } else {
       const generation = await generateStableText({
@@ -625,20 +649,35 @@ app.post("/v1/chat/completions", async (req, res, next) => {
         conversationLog.memoryTokens = nextMemory.approximateTokens;
         conversationLog.memoryTurns = nextMemory.totalTurns;
       }
-      res.json(
-        buildChatCompletionPayload({
-          responseId,
-          modelName,
-          content,
-          promptText,
-          created,
-        }),
-      );
+      const payload = buildChatCompletionPayload({
+        responseId,
+        modelName,
+        content,
+        promptText,
+        created,
+      });
+      responseBytes = measureJsonBytes(payload);
+      res.json(payload);
     }
 
     conversationLog.durationMs = Date.now() - conversationStart;
     manager.recordConversation(conversationLog);
+    if (trafficTracked) {
+      manager.recordTraffic({
+        model: conversationLog.model,
+        success: true,
+        stream: conversationLog.stream,
+        requestBytes,
+        responseBytes,
+        promptTokens: conversationLog.promptTokens,
+        completionTokens: conversationLog.completionTokens,
+        durationMs: conversationLog.durationMs,
+        timestamp: conversationStart,
+      });
+    }
   } catch (error) {
+    const durationMs = Date.now() - conversationStart;
+
     if (conversationLog) {
       conversationLog.status = "error";
       conversationLog.statusCode = error instanceof AppError ? error.statusCode : 500;
@@ -646,8 +685,24 @@ app.post("/v1/chat/completions", async (req, res, next) => {
       conversationLog.outcome =
         error instanceof AppError && error.code === "prompt_refusal_cooldown" ? "circuit_open" : "error";
       conversationLog.promptFingerprint = promptFingerprint;
-      conversationLog.durationMs = Date.now() - conversationStart;
+      conversationLog.durationMs = durationMs;
       manager.recordConversation(conversationLog);
+    }
+
+    if (trafficTracked && trackedModelName) {
+      manager.recordTraffic({
+        model: conversationLog?.model ?? trackedModelName,
+        success: false,
+        stream: conversationLog?.stream ?? trackedStream,
+        requestBytes,
+        responseBytes,
+        promptTokens: conversationLog?.promptTokens ?? trackedPromptTokens,
+        completionTokens: conversationLog?.completionTokens,
+        durationMs: conversationLog?.durationMs ?? durationMs,
+        timestamp: conversationStart,
+      });
+    } else if (trafficTracked) {
+      manager.releaseTrafficSlot();
     }
 
     next(error);

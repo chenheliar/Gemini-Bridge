@@ -73,6 +73,35 @@ export interface LogEntry {
   message: string;
 }
 
+export interface TrafficAggregate {
+  requests: number;
+  successCount: number;
+  errorCount: number;
+  streamCount: number;
+  requestBytes: number;
+  responseBytes: number;
+  totalBytes: number;
+  promptTokens: number;
+  completionTokens: number;
+  averageLatencyMs: number;
+  requestsPerMinute: number;
+  bytesPerMinute: number;
+  lastRequestAt: string | null;
+}
+
+export interface TrafficModelStat extends TrafficAggregate {
+  model: string;
+}
+
+export interface TrafficSnapshot {
+  startedAt: string | null;
+  recentWindowMinutes: number;
+  inFlight: number;
+  lifetime: TrafficAggregate;
+  recentWindow: TrafficAggregate;
+  topModels: TrafficModelStat[];
+}
+
 export interface ConversationLog {
   id: string;
   timestamp: string;

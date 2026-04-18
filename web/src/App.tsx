@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
+  Activity,
   Copy,
   Cookie,
   FileText,
@@ -44,6 +45,36 @@ type StatusResponse = {
   localUrl: string
   lanUrls: string[]
   preferredUrl: string
+  traffic: TrafficSnapshot
+}
+
+type TrafficAggregate = {
+  requests: number
+  successCount: number
+  errorCount: number
+  streamCount: number
+  requestBytes: number
+  responseBytes: number
+  totalBytes: number
+  promptTokens: number
+  completionTokens: number
+  averageLatencyMs: number
+  requestsPerMinute: number
+  bytesPerMinute: number
+  lastRequestAt: string | null
+}
+
+type TrafficModelStat = TrafficAggregate & {
+  model: string
+}
+
+type TrafficSnapshot = {
+  startedAt: string | null
+  recentWindowMinutes: number
+  inFlight: number
+  lifetime: TrafficAggregate
+  recentWindow: TrafficAggregate
+  topModels: TrafficModelStat[]
 }
 
 type ModelsResponse = {
@@ -118,6 +149,21 @@ function formatDuration(ms: number): string {
   return `${hours} 小时 ${minutes % 60} 分`
 }
 
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
+}
+
+function formatPercent(value: number): string {
+  return `${value.toFixed(1)}%`
+}
+
+function formatRate(value: number): string {
+  return `${value.toFixed(2)}/分`
+}
+
 function cookieStatusLabel(status: CookieInspection['status'] | undefined) {
   if (!status) return '待检查'
   if (status === 'valid') return '正常'
@@ -169,6 +215,13 @@ export default function App() {
   const localApiBase = status?.localUrl ? buildApiBase(status.localUrl) : browserApiBase
   const lanApiBases = (status?.lanUrls ?? []).map((url) => buildApiBase(url))
   const copyableApiBase = lanApiBases.length > 0 ? lanApiBases.join('\n') : localApiBase
+  const traffic = status?.traffic
+  const lifetimeTraffic = traffic?.lifetime
+  const recentTraffic = traffic?.recentWindow
+  const successRate =
+    lifetimeTraffic && lifetimeTraffic.requests > 0
+      ? (lifetimeTraffic.successCount / lifetimeTraffic.requests) * 100
+      : 0
   const isBusy = busyAction !== null
   const serviceLabel = status?.service === 'running' ? '运行中' : '已停止'
   const cookieLabel = cookieStatusLabel(status?.cookieInspection.status)
@@ -611,6 +664,100 @@ export default function App() {
             {status?.lastInitError ? (
               <div className="error-box">启动失败时，请先检查 Cookie 和代理。当前错误：{status.lastInitError}</div>
             ) : null}
+          </article>
+
+          <article className="panel">
+            <div className="panel-head">
+              <div className="panel-title">
+                <Activity size={18} />
+                <h2>流量统计</h2>
+              </div>
+              <span className="status-pill">{traffic ? `${traffic.inFlight} 个进行中` : '统计加载中'}</span>
+            </div>
+
+            <div className="mini-list traffic-grid">
+              <div>
+                <span>累计请求</span>
+                <strong>{lifetimeTraffic?.requests ?? 0}</strong>
+                <span>最近请求：{formatDate(lifetimeTraffic?.lastRequestAt ?? null)}</span>
+              </div>
+              <div>
+                <span>成功率 / 平均耗时</span>
+                <strong>{formatPercent(successRate)}</strong>
+                <span>{lifetimeTraffic?.averageLatencyMs ?? 0} ms</span>
+              </div>
+              <div>
+                <span>累计流量</span>
+                <strong>{formatBytes(lifetimeTraffic?.totalBytes ?? 0)}</strong>
+                <span>
+                  上行 {formatBytes(lifetimeTraffic?.requestBytes ?? 0)} / 下行{' '}
+                  {formatBytes(lifetimeTraffic?.responseBytes ?? 0)}
+                </span>
+              </div>
+              <div>
+                <span>最近 {traffic?.recentWindowMinutes ?? 5} 分钟</span>
+                <strong>{recentTraffic?.requests ?? 0} 次</strong>
+                <span>
+                  {formatRate(recentTraffic?.requestsPerMinute ?? 0)} ｜ {formatBytes(recentTraffic?.totalBytes ?? 0)}
+                </span>
+              </div>
+            </div>
+
+            <div className="mini-list traffic-grid">
+              <div>
+                <span>Prompt Tokens</span>
+                <strong>{lifetimeTraffic?.promptTokens ?? 0}</strong>
+                <span>Completion Tokens：{lifetimeTraffic?.completionTokens ?? 0}</span>
+              </div>
+              <div>
+                <span>流式请求</span>
+                <strong>{lifetimeTraffic?.streamCount ?? 0}</strong>
+                <span>错误请求：{lifetimeTraffic?.errorCount ?? 0}</span>
+              </div>
+              <div>
+                <span>吞吐速率</span>
+                <strong>{formatRate(lifetimeTraffic?.requestsPerMinute ?? 0)}</strong>
+                <span>{formatBytes(lifetimeTraffic?.bytesPerMinute ?? 0)}/分</span>
+              </div>
+              <div>
+                <span>统计起点</span>
+                <strong>{formatDate(traffic?.startedAt ?? null)}</strong>
+                {/* <span>统计已持久化，重启后继续累计</span> */}
+              </div>
+            </div>
+
+            <div className="field-group">
+              <div className="panel-title">
+                <h3>模型分布</h3>
+              </div>
+              {traffic && traffic.topModels.length > 0 ? (
+                <div className="traffic-model-list">
+                  {traffic.topModels.map((model) => {
+                    const modelSuccessRate =
+                      model.requests > 0 ? (model.successCount / model.requests) * 100 : 0
+
+                    return (
+                      <div className="traffic-model-row" key={model.model}>
+                        <div>
+                          <strong>{model.model}</strong>
+                          <span>最近请求：{formatDate(model.lastRequestAt)}</span>
+                        </div>
+                        <div>
+                          <strong>{model.requests} 次</strong>
+                          <span>成功率 {formatPercent(modelSuccessRate)}</span>
+                        </div>
+                        <div>
+                          <strong>{formatBytes(model.totalBytes)}</strong>
+                          <span>{model.averageLatencyMs} ms</span>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              ) : (
+                <div className="log-empty">当前还没有请求流量，等接口被调用后这里会自动出现统计。</div>
+              )}
+            </div>
           </article>
 
           <article className="panel">

@@ -27,7 +27,10 @@ import type {
   LogEntry,
   RuntimeConfig,
   SessionMemorySnapshot,
+  TrafficSnapshot,
 } from "./types.js";
+
+const RECENT_TRAFFIC_WINDOW_MS = 5 * 60 * 1000;
 
 export class ServiceManager {
   readonly events = new EventEmitter();
@@ -50,6 +53,7 @@ export class ServiceManager {
   private requestCount = 0;
   private errorCount = 0;
   private lastRequestAt: string | null = null;
+  private inFlightRequests = 0;
 
   constructor() {
     this.config = loadConfig();
@@ -228,7 +232,15 @@ export class ServiceManager {
       historyDbPath: this.config.historyDbPath,
       historyConversationCount: this.historyStore.getConversationCount(),
       lastInitError: this.lastInitError,
+      traffic: this.getTrafficSnapshot(),
     };
+  }
+
+  getTrafficSnapshot(): TrafficSnapshot {
+    return this.stateStore.getTrafficSnapshot({
+      recentWindowMs: RECENT_TRAFFIC_WINDOW_MS,
+      inFlight: this.inFlightRequests,
+    });
   }
 
   getCookiesPayload() {
@@ -402,9 +414,40 @@ export class ServiceManager {
   markRequest(): void {
     this.requestCount += 1;
     this.lastRequestAt = new Date().toISOString();
+    this.inFlightRequests += 1;
   }
 
   markError(): void {
     this.errorCount += 1;
+  }
+
+  releaseTrafficSlot(): void {
+    this.inFlightRequests = Math.max(0, this.inFlightRequests - 1);
+  }
+
+  recordTraffic(entry: {
+    model: string;
+    success: boolean;
+    stream: boolean;
+    requestBytes: number;
+    responseBytes: number;
+    promptTokens?: number | null;
+    completionTokens?: number | null;
+    durationMs: number;
+    timestamp?: number;
+  }): TrafficSnapshot {
+    this.stateStore.insertTrafficEvent({
+      timestamp: new Date(entry.timestamp ?? Date.now()).toISOString(),
+      model: entry.model,
+      success: entry.success,
+      stream: entry.stream,
+      requestBytes: entry.requestBytes,
+      responseBytes: entry.responseBytes,
+      promptTokens: entry.promptTokens ?? 0,
+      completionTokens: entry.completionTokens ?? 0,
+      durationMs: entry.durationMs,
+    });
+    this.releaseTrafficSlot();
+    return this.getTrafficSnapshot();
   }
 }

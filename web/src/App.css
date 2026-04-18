@@ -174,6 +174,34 @@
   line-height: 1.4;
 }
 
+.traffic-grid span {
+  overflow-wrap: anywhere;
+}
+
+.traffic-model-list {
+  display: grid;
+  gap: 10px;
+}
+
+.traffic-model-row {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) repeat(2, minmax(160px, 1fr));
+  gap: 12px;
+  padding: 12px;
+  border: 2px solid var(--border);
+  background: var(--surface-muted);
+}
+
+.traffic-model-row div {
+  display: grid;
+  gap: 6px;
+}
+
+.traffic-model-row span {
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
 .cookie-note {
   display: flex;
   gap: 12px;
@@ -372,6 +400,10 @@
   }
 
   .log-line {
+    grid-template-columns: 1fr;
+  }
+
+  .traffic-model-row {
     grid-template-columns: 1fr;
   }
 

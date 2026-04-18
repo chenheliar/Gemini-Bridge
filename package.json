@@ -1,7 +1,7 @@
 {
   "name": "gemini-node-bridge",
   "productName": "Gemini Bridge",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "private": true,
   "description": "Gemini Bridge desktop app with OpenAI-compatible API and Chinese management interface",
   "type": "module",
