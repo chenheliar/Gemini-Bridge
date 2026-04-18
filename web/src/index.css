@@ -1,0 +1,324 @@
+:root {
+  color-scheme: light;
+  --bg: #f3f1eb;
+  --bg-accent: #ebe8e0;
+  --surface: #ffffff;
+  --surface-strong: #fbfaf7;
+  --surface-muted: #efede7;
+  --surface-contrast: #e4e0d6;
+  --ink: #111111;
+  --ink-soft: #3a3a3a;
+  --ink-muted: #676767;
+  --border: #111111;
+  --border-strong: #111111;
+  --text-primary: #111111;
+  --text-secondary: #3a3a3a;
+  --text-muted: #686560;
+  --text-on-accent: #f7f5ef;
+  --accent: #111111;
+  --accent-strong: #ffffff;
+  --accent-soft: #e7e3da;
+  --accent-mint: #111111;
+  --success: #111111;
+  --success-soft: #e6efe3;
+  --warning: #111111;
+  --warning-soft: #f0eadf;
+  --danger: #111111;
+  --danger-soft: #f2e4e0;
+  --shadow-soft: 6px 6px 0 #111111;
+  --shadow-strong: 10px 10px 0 #111111;
+  --focus-ring: 0 0 0 2px #111111;
+  --panel-stripe: repeating-linear-gradient(
+    90deg,
+    transparent 0,
+    transparent 12px,
+    rgba(17, 17, 17, 0.06) 12px,
+    rgba(17, 17, 17, 0.06) 13px
+  );
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background:
+    linear-gradient(rgba(17, 17, 17, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(17, 17, 17, 0.08) 1px, transparent 1px),
+    linear-gradient(180deg, var(--bg) 0%, var(--bg-accent) 100%);
+  background-size: 24px 24px, 24px 24px, auto;
+  color: var(--text-primary);
+  font-family: 'Microsoft YaHei UI', 'PingFang SC', 'Noto Sans SC', 'Segoe UI', sans-serif;
+  line-height: 1.5;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+button,
+a,
+input,
+textarea,
+select {
+  -webkit-tap-highlight-color: transparent;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+a {
+  color: inherit;
+}
+
+code,
+pre {
+  font-family: 'Cascadia Code', 'JetBrains Mono', 'SFMono-Regular', monospace;
+}
+
+::selection {
+  background: var(--accent-soft);
+}
+
+.page-shell {
+  width: min(1380px, calc(100vw - 24px));
+  margin: 0 auto;
+  padding: clamp(14px, 2vw, 24px) 0 48px;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.skip-link {
+  position: absolute;
+  left: 16px;
+  top: 12px;
+  z-index: 20;
+  padding: 10px 14px;
+  border: 2px solid var(--border);
+  background: var(--surface);
+  color: var(--text-primary);
+  text-decoration: none;
+  transform: translateY(-160%);
+  transition: transform 0.2s ease;
+}
+
+.skip-link:focus {
+  transform: translateY(0);
+}
+
+.route-loading {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  color: var(--text-secondary);
+  font-size: 1rem;
+}
+
+:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.section-label,
+.subtle,
+.card-kicker,
+.field-label,
+.logs-kicker,
+.summary-label,
+.status-rail-label,
+.preview-label,
+.stat-label,
+.badge,
+.token-count,
+.token-badge,
+.path-pill,
+.status-pill,
+.pill,
+.soft-button,
+.primary-button,
+.soft-link,
+.back-link,
+.filter-select span,
+.filter-date span,
+.toggle-auto,
+.detail-section h4,
+.meta-grid dt {
+  font-family: 'Bahnschrift', 'Segoe UI', 'Microsoft YaHei UI', sans-serif;
+  font-size: 0.8rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+}
+
+.soft-button,
+.primary-button,
+.soft-link,
+.back-link,
+.pill,
+.icon-button,
+.copy-btn,
+.conv-header,
+.chip-row button {
+  transition:
+    transform 0.18s ease,
+    background-color 0.18s ease,
+    border-color 0.18s ease,
+    color 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.soft-button,
+.primary-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 10px 16px;
+  border-radius: 0;
+  border: 2px solid var(--border);
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 700;
+  box-shadow: var(--shadow-soft);
+}
+
+.soft-button {
+  background: var(--surface);
+  color: var(--text-primary);
+}
+
+.primary-button {
+  background: var(--accent);
+  color: var(--text-on-accent);
+}
+
+.soft-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;
+  padding: 10px 16px;
+  border-radius: 0;
+  border: 2px solid var(--border);
+  background: var(--surface);
+  color: var(--text-primary);
+  text-decoration: none;
+  font-weight: 700;
+  box-shadow: var(--shadow-soft);
+}
+
+.soft-button:hover,
+.primary-button:hover,
+.soft-link:hover,
+.back-link:hover,
+.pill:hover,
+.icon-button:hover,
+.copy-btn:hover,
+.chip-row button:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: 8px 8px 0 var(--border);
+}
+
+.soft-button:active,
+.primary-button:active,
+.soft-link:active,
+.back-link:active,
+.pill:active,
+.icon-button:active,
+.copy-btn:active,
+.chip-row button:active {
+  transform: translate(2px, 2px);
+  box-shadow: 2px 2px 0 var(--border);
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.52;
+  transform: none;
+  box-shadow: none;
+}
+
+.banner {
+  margin: 0 0 18px;
+  padding: 14px 16px;
+  border: 2px solid var(--border);
+  border-radius: 0;
+  background: var(--surface);
+  box-shadow: var(--shadow-soft);
+  font-weight: 700;
+}
+
+.banner.success {
+  background: linear-gradient(90deg, var(--success-soft) 0 18px, var(--surface) 18px);
+  color: var(--text-primary);
+}
+
+.banner.error {
+  background: linear-gradient(90deg, var(--danger-soft) 0 18px, var(--surface) 18px);
+  color: var(--text-primary);
+}
+
+.banner.info {
+  background: linear-gradient(90deg, var(--accent-soft) 0 18px, var(--surface) 18px);
+  color: var(--text-primary);
+}
+
+.subtle {
+  color: var(--text-muted);
+  font-size: 0.76rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+@media (max-width: 720px) {
+  .page-shell {
+    width: min(100vw - 16px, 1380px);
+    padding: 12px 0 32px;
+  }
+
+  .soft-button,
+  .primary-button,
+  .soft-link {
+    width: 100%;
+  }
+}

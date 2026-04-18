@@ -1,0 +1,811 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Gemini Bridge | 把 Gemini 接进你的工具</title>
+    <meta
+      name="description"
+      content="Gemini Bridge 是一款中文桌面工具，用更简单的方式把 Gemini 接到支持 OpenAI-compatible 接口的软件里。"
+    />
+    <style>
+      :root {
+        --paper: #f5efe5;
+        --paper-2: #ece3d6;
+        --panel: rgba(255, 250, 244, 0.9);
+        --ink: #17120d;
+        --ink-soft: #4d4032;
+        --line: #1f1811;
+        --accent: #d66d3f;
+        --accent-deep: #a04a24;
+        --accent-soft: #f0d8c9;
+        --sage: #d9dfcf;
+        --shadow: 14px 14px 0 rgba(23, 18, 13, 0.95);
+        --shadow-soft: 8px 8px 0 rgba(23, 18, 13, 0.82);
+        --radius: 28px;
+        --max: 1200px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        min-width: 320px;
+        color: var(--ink);
+        font-family: "HarmonyOS Sans SC", "Source Han Sans SC", "PingFang SC", "Microsoft YaHei UI", sans-serif;
+        background:
+          radial-gradient(circle at top left, rgba(214, 109, 63, 0.18), transparent 28%),
+          radial-gradient(circle at top right, rgba(95, 135, 108, 0.12), transparent 24%),
+          linear-gradient(180deg, var(--paper) 0%, #f2eadf 38%, var(--paper-2) 100%);
+        line-height: 1.55;
+      }
+
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        background:
+          linear-gradient(rgba(31, 24, 17, 0.06) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(31, 24, 17, 0.06) 1px, transparent 1px);
+        background-size: 28px 28px;
+        mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.9), rgba(0, 0, 0, 0.32));
+      }
+
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+
+      img {
+        display: block;
+        max-width: 100%;
+      }
+
+      .wrap {
+        width: min(calc(100vw - 32px), var(--max));
+        margin: 0 auto;
+      }
+
+      .site-head {
+        position: sticky;
+        top: 0;
+        z-index: 30;
+        backdrop-filter: blur(14px);
+        background: rgba(245, 239, 229, 0.78);
+        border-bottom: 2px solid rgba(31, 24, 17, 0.12);
+      }
+
+      .site-head-inner {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 14px 0;
+      }
+
+      .brand {
+        display: inline-flex;
+        align-items: center;
+        gap: 12px;
+        font-weight: 800;
+        letter-spacing: 0.04em;
+      }
+
+      .brand-mark {
+        width: 46px;
+        height: 46px;
+        display: grid;
+        place-items: center;
+        border: 2px solid var(--line);
+        border-radius: 16px;
+        background:
+          linear-gradient(145deg, var(--accent) 0%, #f2bf74 100%);
+        box-shadow: 6px 6px 0 rgba(31, 24, 17, 0.9);
+        font-family: "Georgia", "Songti SC", serif;
+        font-size: 1.3rem;
+      }
+
+      .site-nav {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+
+      .nav-link,
+      .nav-cta,
+      .hero-link,
+      .store-button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 50px;
+        padding: 0 18px;
+        border: 2px solid var(--line);
+        border-radius: 999px;
+        font-weight: 700;
+        transition:
+          transform 0.22s ease,
+          box-shadow 0.22s ease,
+          background-color 0.22s ease;
+      }
+
+      .nav-link {
+        background: rgba(255, 255, 255, 0.5);
+      }
+
+      .nav-cta,
+      .hero-link.primary,
+      .store-button {
+        background: var(--ink);
+        color: #fff7ef;
+        box-shadow: var(--shadow-soft);
+      }
+
+      .hero-link.secondary {
+        background: rgba(255, 255, 255, 0.55);
+      }
+
+      .nav-link:hover,
+      .nav-cta:hover,
+      .hero-link:hover,
+      .store-button:hover {
+        transform: translate(-2px, -2px);
+        box-shadow: 10px 10px 0 rgba(31, 24, 17, 0.9);
+      }
+
+      .hero {
+        padding: clamp(36px, 5vw, 82px) 0 42px;
+      }
+
+      .hero-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1.05fr) minmax(360px, 0.95fr);
+        gap: clamp(22px, 4vw, 48px);
+        align-items: start;
+      }
+
+      .hero-copy {
+        display: grid;
+        gap: 22px;
+      }
+
+      .eyebrow {
+        width: fit-content;
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 14px;
+        border: 2px solid var(--line);
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.56);
+        font-size: 0.92rem;
+        font-weight: 800;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+      }
+
+      .hero-copy h1 {
+        max-width: 12ch;
+        font-family: "Georgia", "STSong", "Songti SC", serif;
+        font-size: clamp(3rem, 8vw, 6.2rem);
+        line-height: 0.92;
+        letter-spacing: -0.06em;
+      }
+
+      .hero-lead {
+        max-width: 36rem;
+        font-size: clamp(1.06rem, 2.1vw, 1.28rem);
+        color: var(--ink-soft);
+      }
+
+      .hero-strip {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 14px;
+        border: 2px solid rgba(31, 24, 17, 0.16);
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.52);
+        font-weight: 700;
+      }
+
+      .hero-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 14px;
+      }
+
+      .hero-note {
+        display: grid;
+        gap: 14px;
+        padding: 22px;
+        border: 2px solid var(--line);
+        border-radius: 30px;
+        background: linear-gradient(180deg, rgba(255, 250, 244, 0.86), rgba(240, 216, 201, 0.86));
+        box-shadow: var(--shadow);
+      }
+
+      .hero-note-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      .hero-note-item {
+        padding: 14px;
+        border-radius: 20px;
+        background: rgba(255, 255, 255, 0.7);
+        border: 2px solid rgba(31, 24, 17, 0.14);
+      }
+
+      .hero-note-item strong {
+        display: block;
+        margin-bottom: 8px;
+        font-size: 1.4rem;
+      }
+
+      .hero-visual {
+        position: relative;
+        display: grid;
+        gap: 18px;
+      }
+
+      .visual-frame {
+        overflow: hidden;
+        border: 2px solid var(--line);
+        border-radius: 32px;
+        background: rgba(255, 255, 255, 0.76);
+        box-shadow: var(--shadow);
+      }
+
+      .visual-frame img {
+        width: 100%;
+        height: auto;
+        object-fit: cover;
+      }
+
+      .floating-card {
+        position: absolute;
+        right: -12px;
+        bottom: 24px;
+        max-width: 260px;
+        padding: 18px;
+        border: 2px solid var(--line);
+        border-radius: 24px;
+        background: rgba(217, 223, 207, 0.95);
+        box-shadow: var(--shadow-soft);
+      }
+
+      .floating-card strong {
+        display: block;
+        margin-bottom: 8px;
+        font-size: 1.08rem;
+      }
+
+      section {
+        padding: 26px 0;
+      }
+
+      .section-head {
+        display: grid;
+        gap: 12px;
+        margin-bottom: 22px;
+      }
+
+      .section-head h2 {
+        font-family: "Georgia", "STSong", "Songti SC", serif;
+        font-size: clamp(2rem, 4vw, 3.2rem);
+        line-height: 0.98;
+        letter-spacing: -0.04em;
+      }
+
+      .section-head p {
+        max-width: 42rem;
+        color: var(--ink-soft);
+      }
+
+      .problem-grid,
+      .feature-grid,
+      .steps,
+      .faq-grid {
+        display: grid;
+        gap: 16px;
+      }
+
+      .problem-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      .feature-grid {
+        grid-template-columns: 1.25fr 0.75fr 0.95fr;
+      }
+
+      .steps {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+      }
+
+      .faq-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .card,
+      .feature-card,
+      .step-card,
+      .faq-card,
+      .download-panel {
+        border: 2px solid var(--line);
+        background: var(--panel);
+        box-shadow: var(--shadow-soft);
+      }
+
+      .card,
+      .feature-card,
+      .step-card,
+      .faq-card {
+        border-radius: 28px;
+        padding: 22px;
+      }
+
+      .card {
+        min-height: 220px;
+        display: grid;
+        gap: 14px;
+      }
+
+      .card-index,
+      .step-index {
+        width: fit-content;
+        padding: 8px 12px;
+        border-radius: 999px;
+        background: var(--accent-soft);
+        border: 2px solid rgba(31, 24, 17, 0.12);
+        font-size: 0.85rem;
+        font-weight: 800;
+      }
+
+      .card h3,
+      .feature-card h3,
+      .step-card h3,
+      .faq-card h3 {
+        font-size: 1.22rem;
+      }
+
+      .muted {
+        color: var(--ink-soft);
+      }
+
+      .feature-card.accent {
+        background: linear-gradient(180deg, rgba(214, 109, 63, 0.18), rgba(255, 250, 244, 0.84));
+      }
+
+      .feature-card.sage {
+        background: linear-gradient(180deg, rgba(217, 223, 207, 0.9), rgba(255, 250, 244, 0.84));
+      }
+
+      .feature-card ul {
+        margin: 0;
+        padding-left: 1.1rem;
+        color: var(--ink-soft);
+      }
+
+      .feature-card li + li {
+        margin-top: 10px;
+      }
+
+      .step-card {
+        display: grid;
+        gap: 14px;
+      }
+
+      .step-card p,
+      .faq-card p {
+        color: var(--ink-soft);
+      }
+
+      .download {
+        padding-bottom: clamp(52px, 8vw, 92px);
+      }
+
+      .download-panel {
+        display: grid;
+        grid-template-columns: minmax(0, 1.12fr) minmax(280px, 0.88fr);
+        gap: 24px;
+        padding: clamp(22px, 3vw, 34px);
+        border-radius: 36px;
+        background:
+          radial-gradient(circle at top left, rgba(214, 109, 63, 0.2), transparent 34%),
+          linear-gradient(160deg, rgba(255, 249, 242, 0.96), rgba(236, 227, 214, 0.92));
+        box-shadow: var(--shadow);
+      }
+
+      .download-copy {
+        display: grid;
+        gap: 16px;
+      }
+
+      .download-copy h2 {
+        font-family: "Georgia", "STSong", "Songti SC", serif;
+        font-size: clamp(2.1rem, 4vw, 3.3rem);
+        line-height: 0.96;
+        letter-spacing: -0.04em;
+      }
+
+      .download-side {
+        display: grid;
+        gap: 14px;
+        align-content: start;
+      }
+
+      .download-meta {
+        display: grid;
+        gap: 10px;
+        padding: 18px;
+        border-radius: 24px;
+        background: rgba(255, 255, 255, 0.72);
+        border: 2px solid rgba(31, 24, 17, 0.14);
+      }
+
+      .download-code {
+        display: inline-flex;
+        width: fit-content;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 14px;
+        border-radius: 999px;
+        background: var(--ink);
+        color: #fff7ef;
+        font-weight: 800;
+        letter-spacing: 0.04em;
+      }
+
+      .site-foot {
+        padding: 0 0 40px;
+      }
+
+      .foot-panel {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 20px 24px;
+        border: 2px solid rgba(31, 24, 17, 0.18);
+        border-radius: 24px;
+        background: rgba(255, 255, 255, 0.44);
+      }
+
+      .fade-up {
+        opacity: 0;
+        transform: translateY(28px);
+        transition:
+          opacity 0.8s ease,
+          transform 0.8s cubic-bezier(0.22, 1, 0.36, 1);
+      }
+
+      .fade-up.is-visible {
+        opacity: 1;
+        transform: translateY(0);
+      }
+
+      .delay-1 {
+        transition-delay: 0.08s;
+      }
+
+      .delay-2 {
+        transition-delay: 0.16s;
+      }
+
+      .delay-3 {
+        transition-delay: 0.24s;
+      }
+
+      @media (max-width: 1080px) {
+        .hero-grid,
+        .download-panel,
+        .feature-grid,
+        .problem-grid,
+        .steps,
+        .faq-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .floating-card {
+          position: static;
+          max-width: none;
+        }
+
+        .hero-note-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      @media (max-width: 720px) {
+        .site-head-inner,
+        .foot-panel {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+
+        .site-nav,
+        .hero-actions {
+          width: 100%;
+        }
+
+        .nav-link,
+        .nav-cta,
+        .hero-link,
+        .store-button {
+          width: 100%;
+        }
+
+        .hero-copy h1 {
+          max-width: none;
+        }
+
+        .card,
+        .feature-card,
+        .step-card,
+        .faq-card,
+        .download-panel,
+        .hero-note,
+        .visual-frame {
+          border-radius: 24px;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        html {
+          scroll-behavior: auto;
+        }
+
+        *,
+        *::before,
+        *::after {
+          animation: none !important;
+          transition: none !important;
+        }
+
+        .fade-up {
+          opacity: 1;
+          transform: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="site-head">
+      <div class="wrap site-head-inner">
+        <a class="brand" href="#top">
+          <span class="brand-mark">G</span>
+          <span>Gemini Bridge</span>
+        </a>
+        <nav class="site-nav">
+          <a class="nav-link" href="#features">为什么好用</a>
+          <a class="nav-link" href="#steps">怎么开始</a>
+          <a class="nav-link" href="#faq">常见问题</a>
+          <a class="nav-cta" href="https://pan.baidu.com/s/1VWrsM7DenzQ2XShguos0Ug?pwd=3a3w" target="_blank" rel="noreferrer">立即下载</a>
+        </nav>
+      </div>
+    </header>
+
+    <main id="top">
+      <section class="hero">
+        <div class="wrap hero-grid">
+          <div class="hero-copy fade-up">
+            <div class="eyebrow">Gemini Bridge · 中文桌面工具</div>
+            <h1>把 Gemini 接进你的工具，不再折腾配置。</h1>
+            <p class="hero-lead">
+              Gemini Bridge 把原本容易卡住人的 Cookie、代理和接口地址，整理成一个清楚的中文界面。照着填，保存，启动，就能把 Gemini 接到支持 OpenAI-compatible 的软件里。
+            </p>
+            <div class="hero-strip">
+              <span class="pill">中文图形界面</span>
+              <span class="pill">普通用户可上手</span>
+              <span class="pill">端口占用自动换</span>
+              <span class="pill">默认模型可直接选</span>
+            </div>
+            <div class="hero-actions">
+              <a class="hero-link primary" href="https://pan.baidu.com/s/1VWrsM7DenzQ2XShguos0Ug?pwd=3a3w" target="_blank" rel="noreferrer">下载 Gemini Bridge</a>
+              <a class="hero-link secondary" href="#preview">先看界面</a>
+            </div>
+            <div class="hero-note fade-up delay-1">
+              <p>你不需要记命令，也不需要反复查端口。首页会直接告诉你服务状态、当前接口地址和下一步该做什么。</p>
+              <div class="hero-note-grid">
+                <div class="hero-note-item">
+                  <strong>1 分钟</strong>
+                  <span>看懂页面结构，知道从哪里开始。</span>
+                </div>
+                <div class="hero-note-item">
+                  <strong>3 步</strong>
+                  <span>填 Cookie、选模型、点启动。</span>
+                </div>
+                <div class="hero-note-item">
+                  <strong>1 个入口</strong>
+                  <span>把页面显示的地址填进你的客户端。</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="hero-visual fade-up delay-2" id="preview">
+            <div class="visual-frame">
+              <img src="https://img.heliar.top/file/1776241686234_Gemini_Bridge.png" alt="Gemini Bridge 应用界面预览" />
+            </div>
+            <div class="floating-card">
+              <strong>给不想研究电脑细节的人</strong>
+              <p>界面只保留真正需要用到的内容。常用动作放前面，说明写成直白中文，出问题时先看哪里也写在页面里。</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="wrap">
+        <div class="section-head fade-up">
+          <h2>以前难，不是因为你不会用，是因为工具太像开发后台。</h2>
+          <p>Gemini Bridge 把复杂步骤拆开，只保留普通用户真正需要关心的内容。</p>
+        </div>
+        <div class="problem-grid">
+          <article class="card fade-up">
+            <span class="card-index">以前常见问题 01</span>
+            <h3>不知道从哪里开始</h3>
+            <p class="muted">很多工具一打开就是参数、日志和一堆英文，普通用户很难判断第一步该做什么。</p>
+          </article>
+          <article class="card fade-up delay-1">
+            <span class="card-index">以前常见问题 02</span>
+            <h3>端口一变就连不上</h3>
+            <p class="muted">一个旧地址记错了，客户端就会报错。Gemini Bridge 会自动换可用端口，并把当前地址直接显示在首页。</p>
+          </article>
+          <article class="card fade-up delay-2">
+            <span class="card-index">以前常见问题 03</span>
+            <h3>出问题时不知道先看哪</h3>
+            <p class="muted">Cookie 是否正常、代理有没有生效、服务有没有启动，页面都会给出直接反馈，不需要自己猜。</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="wrap" id="features">
+        <div class="section-head fade-up">
+          <h2>这页不是把功能堆出来，而是把你真正会用到的东西摆到前面。</h2>
+          <p>重点不是“功能多”，而是“你能顺利用起来”。</p>
+        </div>
+        <div class="feature-grid">
+          <article class="feature-card accent fade-up">
+            <h3>首页就把关键内容讲清楚</h3>
+            <p class="muted">服务是否运行、Cookie 状态、默认模型、接口地址，都放在一个页面里。你不需要到处切换找信息。</p>
+          </article>
+          <article class="feature-card sage fade-up delay-1">
+            <h3>使用说明直接弹出</h3>
+            <p class="muted">不需要再找外部文档。点击“使用说明”，就能看到一份适合普通用户的简明操作指引。</p>
+          </article>
+          <article class="feature-card fade-up delay-2">
+            <h3>为实际使用准备的细节</h3>
+            <ul>
+              <li>窗口固定大小，不会拉坏布局。</li>
+              <li>不再保留暗色模式，阅读更稳定。</li>
+              <li>默认模型可下拉选择并保存。</li>
+              <li>日志保留，方便判断问题出在哪。</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section class="wrap" id="steps">
+        <div class="section-head fade-up">
+          <h2>开始使用，只需要四步。</h2>
+          <p>这不是给技术人员写的流程，而是给第一次接触这类工具的人准备的顺序。</p>
+        </div>
+        <div class="steps">
+          <article class="step-card fade-up">
+            <span class="step-index">STEP 1</span>
+            <h3>打开应用</h3>
+            <p>安装后直接打开 Gemini Bridge，首页就能看到当前状态。</p>
+          </article>
+          <article class="step-card fade-up delay-1">
+            <span class="step-index">STEP 2</span>
+            <h3>粘贴 Cookie</h3>
+            <p>把准备好的 Cookie JSON 粘进去保存。页面会立刻检查状态。</p>
+          </article>
+          <article class="step-card fade-up delay-2">
+            <span class="step-index">STEP 3</span>
+            <h3>按需要填写代理</h3>
+            <p>如果你的网络环境需要代理，就填进去；如果不需要，可以留空。</p>
+          </article>
+          <article class="step-card fade-up delay-3">
+            <span class="step-index">STEP 4</span>
+            <h3>启动并复制地址</h3>
+            <p>点启动服务，把页面显示的 `/v1` 地址填到你的客户端里使用。</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="wrap" id="faq">
+        <div class="section-head fade-up">
+          <h2>你可能最关心的几个问题。</h2>
+          <p>先把常见疑问说清楚，避免下载后还要猜。</p>
+        </div>
+        <div class="faq-grid">
+          <article class="faq-card fade-up">
+            <h3>适合谁用？</h3>
+            <p>适合想把 Gemini 接到自己常用工具里，但又不想自己研究命令、端口、配置文件的人。</p>
+          </article>
+          <article class="faq-card fade-up delay-1">
+            <h3>需要懂技术吗？</h3>
+            <p>不需要。只要你知道如何准备 Cookie，剩下的大部分步骤都能在中文界面里完成。</p>
+          </article>
+          <article class="faq-card fade-up delay-2">
+            <h3>如果端口被占用怎么办？</h3>
+            <p>应用会自动换一个可用端口，你只需要看页面里当前显示的接口地址，不用手动改。</p>
+          </article>
+          <article class="faq-card fade-up delay-3">
+            <h3>如果启动失败怎么办？</h3>
+            <p>先看 Cookie 状态，再看代理和运行日志。页面给出的提示已经按普通用户能理解的方式整理过。</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="wrap download">
+        <div class="download-panel fade-up">
+          <div class="download-copy">
+            <div class="eyebrow">现在就开始</div>
+            <h2>不想再折腾配置，就用一页看得懂、一步步能完成的 Gemini Bridge。</h2>
+            <p class="muted">
+              下载安装后，按页面提示填入 Cookie，选择默认模型，启动服务即可。你真正要复制到客户端里的，只有一个页面上清清楚楚写着的接口地址。
+            </p>
+          </div>
+          <aside class="download-side">
+            <a class="store-button" href="https://pan.baidu.com/s/1VWrsM7DenzQ2XShguos0Ug?pwd=3a3w" target="_blank" rel="noreferrer">前往下载页面</a>
+            <div class="download-meta">
+              <strong>下载方式</strong>
+              <span>百度网盘</span>
+              <span class="download-code">提取码 3a3w</span>
+            </div>
+            <div class="download-meta">
+              <strong>界面预览图</strong>
+              <span>已使用你提供的官方截图</span>
+            </div>
+          </aside>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-foot">
+      <div class="wrap foot-panel">
+        <strong>Gemini Bridge</strong>
+        <span class="muted">给普通用户准备的 Gemini 接入工具。</span>
+      </div>
+    </footer>
+
+    <script>
+      const observer = new IntersectionObserver(
+        (entries) => {
+          for (const entry of entries) {
+            if (entry.isIntersecting) {
+              entry.target.classList.add("is-visible");
+              observer.unobserve(entry.target);
+            }
+          }
+        },
+        { threshold: 0.16 }
+      );
+
+      document.querySelectorAll(".fade-up").forEach((element) => observer.observe(element));
+    </script>
+  </body>
+</html>
