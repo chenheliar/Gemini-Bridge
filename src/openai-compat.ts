@@ -19,6 +19,19 @@ export const chatCompletionRequestSchema = z.object({
 
 export type ChatCompletionRequest = z.infer<typeof chatCompletionRequestSchema>;
 
+export const responseRequestSchema = z.object({
+  model: z.string().optional(),
+  input: z.union([z.string(), z.array(z.any())]),
+  instructions: z.string().optional(),
+  stream: z.boolean().optional().default(false),
+  temperature: z.number().optional(),
+  max_output_tokens: z.number().optional(),
+  user: z.string().optional(),
+  metadata: z.record(z.string(), z.any()).optional(),
+}).passthrough();
+
+export type ResponseRequest = z.infer<typeof responseRequestSchema>;
+
 export type NormalizedMessage = {
   role: string;
   content: string;
@@ -330,6 +343,104 @@ export function resolveRequestedModel(requestedModel: string | undefined, availa
   return DEFAULT_MODEL;
 }
 
+function normalizeResponseContent(content: unknown): string {
+  if (content == null) {
+    return "";
+  }
+
+  if (typeof content === "string") {
+    return content.trim();
+  }
+
+  if (!Array.isArray(content)) {
+    throw new InvalidRequestError("Only text response input content is supported.", "unsupported_response_content");
+  }
+
+  return content
+    .map((item) => {
+      if (!item || typeof item !== "object") {
+        throw new InvalidRequestError("Each response input content part must be an object.", "invalid_response_part");
+      }
+
+      const record = item as Record<string, unknown>;
+      const partType = String(record.type ?? "");
+      if (partType === "input_text" || partType === "output_text" || partType === "text") {
+        return String(record.text ?? record.input_text ?? "").trim();
+      }
+
+      throw new InvalidRequestError(
+        "This bridge currently supports text-only Responses API input.",
+        "unsupported_response_part",
+      );
+    })
+    .filter(Boolean)
+    .join("\n")
+    .trim();
+}
+
+function normalizeResponseInputItem(item: unknown, index: number): NormalizedMessage | null {
+  if (typeof item === "string") {
+    const content = item.trim();
+    return content ? { role: "user", content } : null;
+  }
+
+  if (!item || typeof item !== "object") {
+    throw new InvalidRequestError(`input[${index}] must be a string or object.`, "invalid_response_input");
+  }
+
+  const record = item as Record<string, unknown>;
+  const itemType = String(record.type ?? "message");
+  if (itemType !== "message") {
+    throw new InvalidRequestError(
+      `Unsupported Responses API input item type: ${itemType || "unknown"}`,
+      "unsupported_response_input_item",
+    );
+  }
+
+  const role = String(record.role ?? "user").trim();
+  if (!supportedMessageRoles.has(role)) {
+    throw new InvalidRequestError(`Unsupported response input role: ${role || "unknown"}`);
+  }
+
+  const content = normalizeResponseContent(record.content);
+  if (!content) {
+    return null;
+  }
+
+  return {
+    role,
+    content,
+    name: typeof record.name === "string" ? record.name : undefined,
+  };
+}
+
+export function responseInputToMessages(request: ResponseRequest): Array<Record<string, unknown>> {
+  const messages: NormalizedMessage[] = [];
+  if (request.instructions?.trim()) {
+    messages.push({ role: "system", content: request.instructions.trim() });
+  }
+
+  if (typeof request.input === "string") {
+    const content = request.input.trim();
+    if (content) {
+      messages.push({ role: "user", content });
+    }
+  } else {
+    request.input.forEach((item, index) => {
+      const message = normalizeResponseInputItem(item, index);
+      if (message) {
+        messages.push(message);
+      }
+    });
+  }
+
+  if (!messages.some((message) => message.role !== "system" && message.role !== "developer")) {
+    throw new InvalidRequestError("At least one text input message is required.", "invalid_response_input");
+  }
+
+  return messages;
+}
+
 export function buildChatCompletionPayload(params: {
   responseId: string;
   modelName: string;
@@ -383,6 +494,91 @@ export function buildChatCompletionChunk(params: {
         finish_reason: params.finishReason ?? null,
       },
     ],
+  };
+}
+
+export function buildResponsePayload(params: {
+  responseId: string;
+  messageId: string;
+  modelName: string;
+  content: string;
+  promptText: string;
+  created?: number;
+  instructions?: string | null;
+  maxOutputTokens?: number | null;
+  metadata?: Record<string, unknown> | null;
+  status?: "completed" | "in_progress";
+}) {
+  const created = params.created ?? Math.floor(Date.now() / 1000);
+  const promptTokens = approxTokens(params.promptText);
+  const completionTokens = approxTokens(params.content);
+  const status = params.status ?? "completed";
+
+  return {
+    id: params.responseId,
+    object: "response",
+    created_at: created,
+    status,
+    background: false,
+    error: null,
+    incomplete_details: null,
+    instructions: params.instructions ?? null,
+    max_output_tokens: params.maxOutputTokens ?? null,
+    model: params.modelName,
+    output: status === "completed"
+      ? [
+          {
+            id: params.messageId,
+            type: "message",
+            status: "completed",
+            role: "assistant",
+            content: [
+              {
+                type: "output_text",
+                text: params.content,
+                annotations: [],
+              },
+            ],
+          },
+        ]
+      : [],
+    output_text: params.content,
+    parallel_tool_calls: true,
+    previous_response_id: null,
+    store: false,
+    text: {
+      format: {
+        type: "text",
+      },
+    },
+    metadata: params.metadata ?? {},
+    usage: {
+      input_tokens: promptTokens,
+      output_tokens: completionTokens,
+      total_tokens: promptTokens + completionTokens,
+      output_tokens_details: {
+        reasoning_tokens: 0,
+      },
+    },
+  };
+}
+
+export function buildResponseOutputTextDelta(params: {
+  responseId: string;
+  messageId: string;
+  delta: string;
+  sequenceNumber: number;
+  outputIndex?: number;
+  contentIndex?: number;
+}) {
+  return {
+    type: "response.output_text.delta",
+    sequence_number: params.sequenceNumber,
+    response_id: params.responseId,
+    item_id: params.messageId,
+    output_index: params.outputIndex ?? 0,
+    content_index: params.contentIndex ?? 0,
+    delta: params.delta,
   };
 }
 

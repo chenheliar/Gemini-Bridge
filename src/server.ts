@@ -17,8 +17,12 @@ import {
   buildChatCompletionChunk,
   buildChatCompletionPayload,
   buildOpenAiError,
+  buildResponseOutputTextDelta,
+  buildResponsePayload,
   chatCompletionRequestSchema,
   extractLatestUserMessage,
+  responseInputToMessages,
+  responseRequestSchema,
   resolveRequestedModel,
 } from "./openai-compat.js";
 import { ServiceManager } from "./service-manager.js";
@@ -324,6 +328,195 @@ function resolveGenerationProfile(stream: boolean, sessionKey: string | null): G
   };
 }
 
+type PreparedGenerationRequest = {
+  req: express.Request;
+  body: Record<string, unknown> & {
+    model?: string;
+    stream?: boolean;
+    user?: string;
+    metadata?: Record<string, unknown>;
+  };
+  messages: Array<Record<string, unknown>>;
+  responseIdPrefix: string;
+};
+
+type PreparedGenerationContext = {
+  body: PreparedGenerationRequest["body"];
+  messages: Array<Record<string, unknown>>;
+  modelName: string;
+  activeAnchorSourcePath: string | null;
+  sessionKey: string | null;
+  promptText: string;
+  promptSourceText: string;
+  compacted: boolean;
+  promptFingerprint: string;
+  memoryTokens: number;
+  memoryTurns: number;
+  responseId: string;
+  created: number;
+  generationProfile: GenerationProfile;
+};
+
+type CompletedGeneration = {
+  content: string;
+  completionStage: GenerationStage;
+  refusalKind: RefusalKind | null;
+};
+
+function parseRequestBody<T>(parser: () => T): T {
+  try {
+    return parser();
+  } catch (error) {
+    if (error instanceof ZodError) {
+      throw new InvalidRequestError(formatZodError(error), "invalid_request_payload");
+    }
+    throw error;
+  }
+}
+
+function createConversationLog(
+  conversationStart: number,
+  context: PreparedGenerationContext,
+  requestBody: Record<string, unknown>,
+): ConversationLog {
+  return {
+    id: context.responseId,
+    timestamp: new Date(conversationStart).toISOString(),
+    model: context.modelName,
+    requestedModel: context.body.model ?? null,
+    sessionKey: context.sessionKey ?? "stateless",
+    anchorSourcePath: context.activeAnchorSourcePath,
+    anchorEphemeral: !!context.activeAnchorSourcePath,
+    compacted: context.compacted,
+    stream: !!context.body.stream,
+    status: "success",
+    statusCode: null,
+    errorMessage: null,
+    promptPreview: context.promptText.length > 500 ? `${context.promptText.slice(0, 500)}...` : context.promptText,
+    responsePreview: null,
+    durationMs: 0,
+    responseId: context.responseId,
+    promptTokens: approxTokens(context.promptText),
+    sourcePromptTokens: approxTokens(context.promptSourceText),
+    memoryTokens: context.memoryTokens,
+    memoryTurns: context.memoryTurns,
+    completionTokens: null,
+    outcome: "answer",
+    completionStage: "none",
+    refusalKind: null,
+    promptFingerprint: context.promptFingerprint,
+    requestPayload: JSON.stringify(requestBody),
+    promptBody: context.promptText,
+    responseBody: null,
+  };
+}
+
+function updateConversationLogAfterGeneration(
+  conversationLog: ConversationLog,
+  context: PreparedGenerationContext,
+  generation: CompletedGeneration,
+): void {
+  conversationLog.completionStage = generation.completionStage;
+  conversationLog.refusalKind = generation.refusalKind;
+  conversationLog.outcome = generation.refusalKind ? "refusal" : "answer";
+  conversationLog.responsePreview =
+    generation.content.length > 800 ? `${generation.content.slice(0, 800)}...` : generation.content;
+  conversationLog.completionTokens = approxTokens(generation.content);
+  conversationLog.responseBody = generation.content;
+
+  if (generation.refusalKind) {
+    const state = registerRefusal(context.promptFingerprint, generation.refusalKind, generation.content);
+    manager.log(
+      "warn",
+      generation.completionStage === "initial"
+        ? `Streaming request ${context.responseId} completed with a refusal for fingerprint ${context.promptFingerprint} (count=${state.refusalCount}).`
+        : `Upstream refusal persisted through ${generation.completionStage} for fingerprint ${context.promptFingerprint} (count=${state.refusalCount}).`,
+    );
+  } else {
+    clearRefusalCircuit(context.promptFingerprint);
+    manager.log(
+      "debug",
+      generation.completionStage === "initial"
+        ? `Streaming request ${context.responseId} completed for fingerprint ${context.promptFingerprint}.`
+        : `Request ${context.responseId} completed via ${generation.completionStage} for fingerprint ${context.promptFingerprint}.`,
+    );
+  }
+
+  if (context.activeAnchorSourcePath && context.sessionKey) {
+    const latestUser = extractLatestUserMessage(context.messages);
+    const nextMemory = manager.updateSessionMemory({
+      sessionKey: context.sessionKey,
+      user: latestUser,
+      assistant: generation.content,
+      anchorSourcePath: context.activeAnchorSourcePath,
+    });
+    conversationLog.memoryTokens = nextMemory.approximateTokens;
+    conversationLog.memoryTurns = nextMemory.totalTurns;
+  }
+}
+
+async function prepareGenerationRequest(params: PreparedGenerationRequest): Promise<PreparedGenerationContext> {
+  const modelName = resolveRequestedModel(params.body.model, new Set(manager.getModels()));
+  const anchor = manager.getAnchor();
+  const activeAnchorSourcePath = anchor.valid ? anchor.sourcePath : null;
+  const sessionKey = resolveSessionKey(params.req, params.body as Record<string, unknown>);
+  const promptBuildMemoryKey = params.body.user ?? sessionKey;
+
+  if (activeAnchorSourcePath && promptBuildMemoryKey) {
+    manager.seedSessionMemory({
+      sessionKey: promptBuildMemoryKey,
+      turns: buildTurnSeedFromTranscript(params.messages),
+      anchorSourcePath: activeAnchorSourcePath,
+    });
+  }
+
+  const memory = activeAnchorSourcePath && promptBuildMemoryKey
+    ? manager.getSessionMemory(promptBuildMemoryKey)
+    : null;
+  const promptBuild = buildGeminiPrompt(params.messages, {
+    anchored: !!activeAnchorSourcePath,
+    memory: Array.isArray(memory) ? null : memory,
+  });
+  const promptText = promptBuild.promptText;
+  const promptFingerprint = createPromptFingerprint(modelName, activeAnchorSourcePath, promptBuild.sourcePromptText);
+  const generationProfile = resolveGenerationProfile(!!params.body.stream, promptBuildMemoryKey ?? null);
+  const circuitState = getCircuitState(promptFingerprint);
+
+  if (circuitState?.cooldownUntil && circuitState.cooldownUntil > Date.now()) {
+    const retryAfterSeconds = Math.max(1, Math.ceil((circuitState.cooldownUntil - Date.now()) / 1000));
+    params.req.res?.setHeader("Retry-After", String(retryAfterSeconds));
+    throw new AppError(
+      `Upstream has repeatedly refused this same request recently. Cooling down for ${retryAfterSeconds}s before trying again.`,
+      429,
+      "prompt_refusal_cooldown",
+    );
+  }
+
+  if (promptBuild.compacted) {
+    manager.log(
+      "debug",
+      `Prepared anchored prompt from ~${approxTokens(promptBuild.sourcePromptText)} to ~${approxTokens(promptText)} tokens before sending upstream.`,
+    );
+  }
+
+  return {
+    body: params.body,
+    messages: params.messages,
+    modelName,
+    activeAnchorSourcePath,
+    sessionKey: promptBuildMemoryKey ?? null,
+    promptText,
+    promptSourceText: promptBuild.sourcePromptText,
+    compacted: promptBuild.compacted,
+    promptFingerprint,
+    memoryTokens: !Array.isArray(memory) && memory ? memory.approximateTokens : 0,
+    memoryTurns: !Array.isArray(memory) && memory ? memory.totalTurns : 0,
+    responseId: `${params.responseIdPrefix}-${randomUUID()}`,
+    created: Math.floor(Date.now() / 1000),
+    generationProfile,
+  };
+}
+
 async function generateStableText(params: {
   client: Awaited<ReturnType<ServiceManager["ensureClient"]>>;
   promptText: string;
@@ -422,259 +615,53 @@ app.get("/v1/models", (_req, res) => {
   });
 });
 
-app.post("/v1/chat/completions", async (req, res, next) => {
+async function handleTextGenerationRequest(
+  req: express.Request,
+  res: express.Response,
+  next: express.NextFunction,
+  prepared: PreparedGenerationRequest,
+  sendResponse: (params: {
+    context: PreparedGenerationContext;
+    client: Awaited<ReturnType<ServiceManager["ensureClient"]>>;
+    conversationLog: ConversationLog;
+    writeSse: (payload: string) => void;
+  }) => Promise<number>,
+): Promise<void> {
   const conversationStart = Date.now();
   let conversationLog: ConversationLog | null = null;
-  let promptText = "";
-  let promptFingerprint: string | null = null;
+  let context: PreparedGenerationContext | null = null;
   let requestBytes = 0;
   let responseBytes = 0;
   let trafficTracked = false;
-  let trackedModelName: string | null = null;
-  let trackedStream = false;
-  let trackedPromptTokens: number | null = null;
 
   try {
-    let body;
-    try {
-      body = chatCompletionRequestSchema.parse(req.body);
-    } catch (error) {
-      if (error instanceof ZodError) {
-        throw new InvalidRequestError(formatZodError(error), "invalid_request_payload");
-      }
-      throw error;
-    }
-    const messages = body.messages as Array<Record<string, unknown>>;
-    requestBytes = measureJsonBytes(body);
-    const modelName = resolveRequestedModel(body.model, new Set(manager.getModels()));
-    trackedModelName = modelName;
-    trackedStream = !!body.stream;
-    const anchor = manager.getAnchor();
-    const activeAnchorSourcePath = anchor.valid ? anchor.sourcePath : null;
-    const sessionKey = resolveSessionKey(req, body as Record<string, unknown>);
-    if (activeAnchorSourcePath && sessionKey) {
-      manager.seedSessionMemory({
-        sessionKey,
-        turns: buildTurnSeedFromTranscript(messages),
-        anchorSourcePath: activeAnchorSourcePath,
-      });
-    }
-    const memory = activeAnchorSourcePath && sessionKey ? manager.getSessionMemory(sessionKey) : null;
-    const promptBuild = buildGeminiPrompt(messages, {
-      anchored: !!activeAnchorSourcePath,
-      memory: Array.isArray(memory) ? null : memory,
-    });
-    promptText = promptBuild.promptText;
-    trackedPromptTokens = approxTokens(promptText);
-    promptFingerprint = createPromptFingerprint(modelName, activeAnchorSourcePath, promptBuild.sourcePromptText);
+    requestBytes = measureJsonBytes(prepared.body);
+    context = await prepareGenerationRequest({ ...prepared, req });
     const client = await manager.ensureClient();
     manager.markRequest();
     trafficTracked = true;
-    const generationProfile = resolveGenerationProfile(!!body.stream, sessionKey);
-    const circuitState = getCircuitState(promptFingerprint);
-    if (circuitState?.cooldownUntil && circuitState.cooldownUntil > Date.now()) {
-      const retryAfterSeconds = Math.max(1, Math.ceil((circuitState.cooldownUntil - Date.now()) / 1000));
-      res.setHeader("Retry-After", String(retryAfterSeconds));
-      throw new AppError(
-        `Upstream has repeatedly refused this same request recently. Cooling down for ${retryAfterSeconds}s before trying again.`,
-        429,
-        "prompt_refusal_cooldown",
-      );
-    }
+    conversationLog = createConversationLog(conversationStart, context, prepared.body);
 
-    if (promptBuild.compacted) {
-      manager.log(
-        "debug",
-        `Prepared anchored prompt from ~${approxTokens(promptBuild.sourcePromptText)} to ~${approxTokens(promptText)} tokens before sending upstream.`,
-      );
-    }
-
-    const responseId = `chatcmpl-${randomUUID()}`;
-    const created = Math.floor(Date.now() / 1000);
-
-    conversationLog = {
-      id: responseId,
-      timestamp: new Date(conversationStart).toISOString(),
-      model: modelName,
-      requestedModel: body.model ?? null,
-      sessionKey: sessionKey ?? "stateless",
-      anchorSourcePath: activeAnchorSourcePath,
-      anchorEphemeral: !!activeAnchorSourcePath,
-      compacted: promptBuild.compacted,
-      stream: !!body.stream,
-      status: "success",
-      statusCode: null,
-      errorMessage: null,
-      promptPreview: promptText.length > 500 ? `${promptText.slice(0, 500)}...` : promptText,
-      responsePreview: null,
-      durationMs: 0,
-      responseId,
-      promptTokens: approxTokens(promptText),
-      sourcePromptTokens: approxTokens(promptBuild.sourcePromptText),
-      memoryTokens: !Array.isArray(memory) && memory ? memory.approximateTokens : 0,
-      memoryTurns: !Array.isArray(memory) && memory ? memory.totalTurns : 0,
-      completionTokens: null,
-      outcome: "answer",
-      completionStage: "none",
-      refusalKind: null,
-      promptFingerprint,
-      requestPayload: JSON.stringify(body),
-      promptBody: promptText,
-      responseBody: null,
+    const writeSse = (payload: string) => {
+      responseBytes += measureUtf8Bytes(payload);
+      res.write(payload);
     };
 
-    if (body.stream) {
-      res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
-      res.setHeader("Cache-Control", "no-cache, no-transform");
-      res.setHeader("Connection", "keep-alive");
-      res.flushHeaders();
-
-      const writeSse = (payload: string) => {
-        responseBytes += measureUtf8Bytes(payload);
-        res.write(payload);
-      };
-
-      writeSse(
-        `data: ${JSON.stringify(
-          buildChatCompletionChunk({
-            responseId,
-            modelName,
-            delta: { role: "assistant" },
-            created,
-          }),
-        )}\n\n`,
-      );
-
-      let fullContent = "";
-      for await (const upstreamChunk of client.streamText(promptText, {
-        modelName,
-        temporary: true,
-        sourcePath: activeAnchorSourcePath,
-        maxAttempts: generationProfile.maxAttempts,
-        reinitializeOnRetry: generationProfile.reinitializeOnRetry,
-      })) {
-        fullContent = upstreamChunk.fullText || `${fullContent}${upstreamChunk.delta}`;
-        if (!upstreamChunk.delta) {
-          continue;
-        }
-
-        writeSse(
-          `data: ${JSON.stringify(
-            buildChatCompletionChunk({
-              responseId,
-              modelName,
-              delta: { content: upstreamChunk.delta },
-              created,
-            }),
-          )}\n\n`,
-        );
-      }
-
-      conversationLog.completionStage = "initial";
-      conversationLog.refusalKind = detectRefusalKind(fullContent);
-      conversationLog.outcome = conversationLog.refusalKind ? "refusal" : "answer";
-      if (conversationLog.refusalKind) {
-        const state = registerRefusal(promptFingerprint, conversationLog.refusalKind, fullContent);
-        manager.log(
-          "warn",
-          `Streaming request ${responseId} completed with a refusal for fingerprint ${promptFingerprint} (count=${state.refusalCount}).`,
-        );
-      } else {
-        clearRefusalCircuit(promptFingerprint);
-        manager.log("debug", `Streaming request ${responseId} completed for fingerprint ${promptFingerprint}.`);
-      }
-
-      conversationLog.responsePreview =
-        fullContent.length > 800 ? `${fullContent.slice(0, 800)}...` : fullContent;
-      conversationLog.completionTokens = approxTokens(fullContent);
-      conversationLog.responseBody = fullContent;
-      if (activeAnchorSourcePath && sessionKey) {
-        const latestUser = extractLatestUserMessage(messages);
-        const nextMemory = manager.updateSessionMemory({
-          sessionKey,
-          user: latestUser,
-          assistant: fullContent,
-          anchorSourcePath: activeAnchorSourcePath,
-        });
-        conversationLog.memoryTokens = nextMemory.approximateTokens;
-        conversationLog.memoryTurns = nextMemory.totalTurns;
-      }
-
-      writeSse(
-        `data: ${JSON.stringify(
-          buildChatCompletionChunk({
-            responseId,
-            modelName,
-            delta: {},
-            created,
-            finishReason: "stop",
-          }),
-        )}\n\n`,
-      );
-      writeSse("data: [DONE]\n\n");
-      res.end();
-    } else {
-      const generation = await generateStableText({
-        client,
-        promptText,
-        modelName,
-        activeAnchorSourcePath,
-        profile: generationProfile,
-      });
-      const content = generation.text;
-      conversationLog.completionStage = generation.completionStage;
-      conversationLog.refusalKind = generation.refusalKind;
-      conversationLog.outcome = generation.refusalKind ? "refusal" : "answer";
-      if (generation.refusalKind) {
-        const state = registerRefusal(promptFingerprint, generation.refusalKind, content);
-        manager.log(
-          "warn",
-          `Upstream refusal persisted through ${generation.completionStage} for fingerprint ${promptFingerprint} (count=${state.refusalCount}).`,
-        );
-      } else {
-        clearRefusalCircuit(promptFingerprint);
-        manager.log("debug", `Request ${responseId} completed via ${generation.completionStage} for fingerprint ${promptFingerprint}.`);
-      }
-      conversationLog.responsePreview = content.length > 800 ? `${content.slice(0, 800)}...` : content;
-      conversationLog.completionTokens = approxTokens(content);
-      conversationLog.responseBody = content;
-      if (activeAnchorSourcePath && sessionKey) {
-        const latestUser = extractLatestUserMessage(messages);
-        const nextMemory = manager.updateSessionMemory({
-          sessionKey,
-          user: latestUser,
-          assistant: content,
-          anchorSourcePath: activeAnchorSourcePath,
-        });
-        conversationLog.memoryTokens = nextMemory.approximateTokens;
-        conversationLog.memoryTurns = nextMemory.totalTurns;
-      }
-      const payload = buildChatCompletionPayload({
-        responseId,
-        modelName,
-        content,
-        promptText,
-        created,
-      });
-      responseBytes = measureJsonBytes(payload);
-      res.json(payload);
-    }
+    responseBytes = await sendResponse({ context, client, conversationLog, writeSse });
 
     conversationLog.durationMs = Date.now() - conversationStart;
     manager.recordConversation(conversationLog);
-    if (trafficTracked) {
-      manager.recordTraffic({
-        model: conversationLog.model,
-        success: true,
-        stream: conversationLog.stream,
-        requestBytes,
-        responseBytes,
-        promptTokens: conversationLog.promptTokens,
-        completionTokens: conversationLog.completionTokens,
-        durationMs: conversationLog.durationMs,
-        timestamp: conversationStart,
-      });
-    }
+    manager.recordTraffic({
+      model: conversationLog.model,
+      success: true,
+      stream: conversationLog.stream,
+      requestBytes,
+      responseBytes,
+      promptTokens: conversationLog.promptTokens,
+      completionTokens: conversationLog.completionTokens,
+      durationMs: conversationLog.durationMs,
+      timestamp: conversationStart,
+    });
   } catch (error) {
     const durationMs = Date.now() - conversationStart;
 
@@ -684,19 +671,19 @@ app.post("/v1/chat/completions", async (req, res, next) => {
       conversationLog.errorMessage = error instanceof Error ? error.message : String(error);
       conversationLog.outcome =
         error instanceof AppError && error.code === "prompt_refusal_cooldown" ? "circuit_open" : "error";
-      conversationLog.promptFingerprint = promptFingerprint;
+      conversationLog.promptFingerprint = context?.promptFingerprint ?? null;
       conversationLog.durationMs = durationMs;
       manager.recordConversation(conversationLog);
     }
 
-    if (trafficTracked && trackedModelName) {
+    if (trafficTracked && context) {
       manager.recordTraffic({
-        model: conversationLog?.model ?? trackedModelName,
+        model: conversationLog?.model ?? context.modelName,
         success: false,
-        stream: conversationLog?.stream ?? trackedStream,
+        stream: conversationLog?.stream ?? !!prepared.body.stream,
         requestBytes,
         responseBytes,
-        promptTokens: conversationLog?.promptTokens ?? trackedPromptTokens,
+        promptTokens: conversationLog?.promptTokens ?? approxTokens(context.promptText),
         completionTokens: conversationLog?.completionTokens,
         durationMs: conversationLog?.durationMs ?? durationMs,
         timestamp: conversationStart,
@@ -707,6 +694,235 @@ app.post("/v1/chat/completions", async (req, res, next) => {
 
     next(error);
   }
+}
+
+app.post("/v1/chat/completions", async (req, res, next) => {
+  const body = parseRequestBody(() => chatCompletionRequestSchema.parse(req.body));
+  const messages = body.messages as Array<Record<string, unknown>>;
+
+  await handleTextGenerationRequest(
+    req,
+    res,
+    next,
+    {
+      req,
+      body,
+      messages,
+      responseIdPrefix: "chatcmpl",
+    },
+    async ({ context, client, conversationLog, writeSse }) => {
+      if (body.stream) {
+        res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+        res.setHeader("Cache-Control", "no-cache, no-transform");
+        res.setHeader("Connection", "keep-alive");
+        res.flushHeaders();
+
+        writeSse(
+          `data: ${JSON.stringify(
+            buildChatCompletionChunk({
+              responseId: context.responseId,
+              modelName: context.modelName,
+              delta: { role: "assistant" },
+              created: context.created,
+            }),
+          )}\n\n`,
+        );
+
+        let fullContent = "";
+        for await (const upstreamChunk of client.streamText(context.promptText, {
+          modelName: context.modelName,
+          temporary: true,
+          sourcePath: context.activeAnchorSourcePath,
+          maxAttempts: context.generationProfile.maxAttempts,
+          reinitializeOnRetry: context.generationProfile.reinitializeOnRetry,
+        })) {
+          fullContent = upstreamChunk.fullText || `${fullContent}${upstreamChunk.delta}`;
+          if (!upstreamChunk.delta) {
+            continue;
+          }
+
+          writeSse(
+            `data: ${JSON.stringify(
+              buildChatCompletionChunk({
+                responseId: context.responseId,
+                modelName: context.modelName,
+                delta: { content: upstreamChunk.delta },
+                created: context.created,
+              }),
+            )}\n\n`,
+          );
+        }
+
+        updateConversationLogAfterGeneration(conversationLog, context, {
+          content: fullContent,
+          completionStage: "initial",
+          refusalKind: detectRefusalKind(fullContent),
+        });
+
+        writeSse(
+          `data: ${JSON.stringify(
+            buildChatCompletionChunk({
+              responseId: context.responseId,
+              modelName: context.modelName,
+              delta: {},
+              created: context.created,
+              finishReason: "stop",
+            }),
+          )}\n\n`,
+        );
+        writeSse("data: [DONE]\n\n");
+        res.end();
+        return 0;
+      }
+
+      const generation = await generateStableText({
+        client,
+        promptText: context.promptText,
+        modelName: context.modelName,
+        activeAnchorSourcePath: context.activeAnchorSourcePath,
+        profile: context.generationProfile,
+      });
+      updateConversationLogAfterGeneration(conversationLog, context, {
+        content: generation.text,
+        completionStage: generation.completionStage,
+        refusalKind: generation.refusalKind,
+      });
+      const payload = buildChatCompletionPayload({
+        responseId: context.responseId,
+        modelName: context.modelName,
+        content: generation.text,
+        promptText: context.promptText,
+        created: context.created,
+      });
+      res.json(payload);
+      return measureJsonBytes(payload);
+    },
+  );
+});
+
+app.post("/v1/responses", async (req, res, next) => {
+  const body = parseRequestBody(() => responseRequestSchema.parse(req.body));
+  const messages = responseInputToMessages(body);
+
+  await handleTextGenerationRequest(
+    req,
+    res,
+    next,
+    {
+      req,
+      body,
+      messages,
+      responseIdPrefix: "resp",
+    },
+    async ({ context, client, conversationLog, writeSse }) => {
+      const messageId = `msg-${randomUUID()}`;
+
+      if (body.stream) {
+        res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+        res.setHeader("Cache-Control", "no-cache, no-transform");
+        res.setHeader("Connection", "keep-alive");
+        res.flushHeaders();
+
+        let sequenceNumber = 1;
+        writeSse(
+          `event: response.created\ndata: ${JSON.stringify(
+            buildResponsePayload({
+              responseId: context.responseId,
+              messageId,
+              modelName: context.modelName,
+              content: "",
+              promptText: context.promptText,
+              created: context.created,
+              instructions: body.instructions ?? null,
+              maxOutputTokens: body.max_output_tokens ?? null,
+              metadata: body.metadata ?? null,
+              status: "in_progress",
+            }),
+          )}\n\n`,
+        );
+
+        let fullContent = "";
+        for await (const upstreamChunk of client.streamText(context.promptText, {
+          modelName: context.modelName,
+          temporary: true,
+          sourcePath: context.activeAnchorSourcePath,
+          maxAttempts: context.generationProfile.maxAttempts,
+          reinitializeOnRetry: context.generationProfile.reinitializeOnRetry,
+        })) {
+          fullContent = upstreamChunk.fullText || `${fullContent}${upstreamChunk.delta}`;
+          if (!upstreamChunk.delta) {
+            continue;
+          }
+
+          sequenceNumber += 1;
+          writeSse(
+            `event: response.output_text.delta\ndata: ${JSON.stringify(
+              buildResponseOutputTextDelta({
+                responseId: context.responseId,
+                messageId,
+                delta: upstreamChunk.delta,
+                sequenceNumber,
+              }),
+            )}\n\n`,
+          );
+        }
+
+        updateConversationLogAfterGeneration(conversationLog, context, {
+          content: fullContent,
+          completionStage: "initial",
+          refusalKind: detectRefusalKind(fullContent),
+        });
+
+        sequenceNumber += 1;
+        writeSse(
+          `event: response.completed\ndata: ${JSON.stringify({
+            type: "response.completed",
+            sequence_number: sequenceNumber,
+            response: buildResponsePayload({
+              responseId: context.responseId,
+              messageId,
+              modelName: context.modelName,
+              content: fullContent,
+              promptText: context.promptText,
+              created: context.created,
+              instructions: body.instructions ?? null,
+              maxOutputTokens: body.max_output_tokens ?? null,
+              metadata: body.metadata ?? null,
+            }),
+          })}\n\n`,
+        );
+        writeSse("data: [DONE]\n\n");
+        res.end();
+        return 0;
+      }
+
+      const generation = await generateStableText({
+        client,
+        promptText: context.promptText,
+        modelName: context.modelName,
+        activeAnchorSourcePath: context.activeAnchorSourcePath,
+        profile: context.generationProfile,
+      });
+      updateConversationLogAfterGeneration(conversationLog, context, {
+        content: generation.text,
+        completionStage: generation.completionStage,
+        refusalKind: generation.refusalKind,
+      });
+      const payload = buildResponsePayload({
+        responseId: context.responseId,
+        messageId,
+        modelName: context.modelName,
+        content: generation.text,
+        promptText: context.promptText,
+        created: context.created,
+        instructions: body.instructions ?? null,
+        maxOutputTokens: body.max_output_tokens ?? null,
+        metadata: body.metadata ?? null,
+      });
+      res.json(payload);
+      return measureJsonBytes(payload);
+    },
+  );
 });
 
 app.get("/admin/status", (_req, res) => {

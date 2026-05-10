@@ -63,6 +63,12 @@ http://127.0.0.1:端口/v1
 - 支持 OpenAI-compatible 接口的插件或客户端
 - 需要本地转接地址的工作流工具
 
+当前本地接口支持：
+
+- `GET /v1/models`
+- `POST /v1/chat/completions`
+- `POST /v1/responses`（文本输入/输出子集）
+
 ## 常见问题
 
 ### 1. 启动失败

@@ -11,6 +11,7 @@ It is designed for internal use: paste your Gemini cookies, optionally set a pro
 - OpenAI-compatible endpoints:
   - `GET /v1/models`
   - `POST /v1/chat/completions`
+  - `POST /v1/responses` (text input/output subset)
 - Built-in dashboard for:
   - service start, stop, and restart
   - cookie editing and status checks
@@ -132,6 +133,17 @@ curl http://127.0.0.1:3100/v1/chat/completions \
     "messages": [
       { "role": "user", "content": "Introduce yourself briefly." }
     ]
+}'
+```
+
+### Responses API
+
+```bash
+curl http://127.0.0.1:3100/v1/responses \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gemini-3-flash",
+    "input": "Introduce yourself briefly."
   }'
 ```
 
