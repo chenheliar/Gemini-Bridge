@@ -1,6 +1,6 @@
 import path from "node:path";
 
-import { APP_DATA_ROOT, DEFAULT_MODEL } from "./constants.js";
+import { APP_DATA_ROOT, DEFAULT_MODEL, GEMINI_MODEL_MAP } from "./constants.js";
 import type { RuntimeConfig } from "./types.js";
 import { readJsonFile, writeJsonFile } from "./utils.js";
 
@@ -21,10 +21,13 @@ export function loadConfig(): RuntimeConfig {
   const loaded = readJsonFile<Partial<RuntimeConfig>>(CONFIG_FILE, {});
   const envPort = Number.parseInt(process.env.GEMINI_NODE_BRIDGE_PORT ?? "", 10);
   const envHost = process.env.GEMINI_NODE_BRIDGE_HOST?.trim() || "";
+  const loadedDefaultModel = loaded.defaultModel ?? DEFAULT_CONFIG.defaultModel;
+  const defaultModel = GEMINI_MODEL_MAP.get(loadedDefaultModel)?.name ?? DEFAULT_MODEL;
 
   return {
     ...DEFAULT_CONFIG,
     ...loaded,
+    defaultModel,
     port: Number.isNaN(envPort) ? (loaded.port ?? DEFAULT_CONFIG.port) : envPort,
     host: envHost || loaded.host || DEFAULT_CONFIG.host,
   };

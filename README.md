@@ -129,7 +129,7 @@ curl http://127.0.0.1:3100/v1/models
 curl http://127.0.0.1:3100/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "gemini-3-flash",
+    "model": "gemini-3.1-flash-lite",
     "messages": [
       { "role": "user", "content": "Introduce yourself briefly." }
     ]
@@ -142,7 +142,7 @@ curl http://127.0.0.1:3100/v1/chat/completions \
 curl http://127.0.0.1:3100/v1/responses \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "gemini-3-flash",
+    "model": "gemini-3.1-flash-lite",
     "input": "Introduce yourself briefly."
   }'
 ```

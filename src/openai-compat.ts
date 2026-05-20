@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { DEFAULT_MODEL } from "./constants.js";
+import { DEFAULT_MODEL, GEMINI_MODEL_MAP } from "./constants.js";
 import { InvalidRequestError } from "./errors.js";
 import { clipText } from "./utils.js";
 import type { SessionMemorySnapshot } from "./types.js";
@@ -331,8 +331,9 @@ export function buildTurnSeedFromTranscript(messages: Array<Record<string, unkno
 
 export function resolveRequestedModel(requestedModel: string | undefined, availableModels: Set<string>): string {
   const candidate = (requestedModel ?? "").trim();
-  if (candidate && availableModels.has(candidate)) {
-    return candidate;
+  const resolvedCandidate = GEMINI_MODEL_MAP.get(candidate);
+  if (resolvedCandidate && availableModels.has(resolvedCandidate.name)) {
+    return resolvedCandidate.name;
   }
   if (candidate.startsWith("gpt-") || candidate.startsWith("o")) {
     return DEFAULT_MODEL;

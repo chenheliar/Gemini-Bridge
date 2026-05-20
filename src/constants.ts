@@ -45,8 +45,9 @@ export const DEFAULT_GEMINI_HEADERS = {
 
 export interface GeminiModelDefinition {
   name: string;
+  aliases?: string[];
   header: Record<string, string>;
-  advancedOnly: boolean;
+  thinkingLevel: "standard" | "extended";
 }
 
 function buildModelHeader(modelId: string, capacityTail: string | number): Record<string, string> {
@@ -58,16 +59,48 @@ function buildModelHeader(modelId: string, capacityTail: string | number): Recor
 }
 
 export const GEMINI_MODELS: GeminiModelDefinition[] = [
-  { name: "gemini-3-pro", header: buildModelHeader("9d8ca3786ebdfbea", 1), advancedOnly: false },
-  { name: "gemini-3-flash", header: buildModelHeader("fbb127bbb056c959", 1), advancedOnly: false },
-  { name: "gemini-3-flash-thinking", header: buildModelHeader("5bf011840784117a", 1), advancedOnly: false },
-  { name: "gemini-3-pro-plus", header: buildModelHeader("e6fa609c3fa255c0", 4), advancedOnly: true },
-  { name: "gemini-3-flash-plus", header: buildModelHeader("56fdd199312815e2", 4), advancedOnly: true },
-  { name: "gemini-3-flash-thinking-plus", header: buildModelHeader("e051ce1aa80aa576", 4), advancedOnly: true },
-  { name: "gemini-3-pro-advanced", header: buildModelHeader("e6fa609c3fa255c0", 2), advancedOnly: true },
-  { name: "gemini-3-flash-advanced", header: buildModelHeader("56fdd199312815e2", 2), advancedOnly: true },
-  { name: "gemini-3-flash-thinking-advanced", header: buildModelHeader("e051ce1aa80aa576", 2), advancedOnly: true },
+  {
+    name: "gemini-3.1-flash-lite",
+    aliases: ["gemini-3-flash", "gemini-fast"],
+    header: buildModelHeader("fbb127bbb056c959", 1),
+    thinkingLevel: "standard",
+  },
+  {
+    name: "gemini-3.5-flash",
+    aliases: ["gemini-3-flash-thinking", "gemini-thinking"],
+    header: buildModelHeader("5bf011840784117a", 1),
+    thinkingLevel: "standard",
+  },
+  {
+    name: "gemini-3.1-pro",
+    aliases: ["gemini-3-pro", "gemini-pro"],
+    header: buildModelHeader("9d8ca3786ebdfbea", 1),
+    thinkingLevel: "standard",
+  },
+  {
+    name: "gemini-3.1-flash-lite-extended",
+    aliases: ["gemini-3-flash-advanced", "gemini-fast-advanced"],
+    header: buildModelHeader("56fdd199312815e2", 2),
+    thinkingLevel: "extended",
+  },
+  {
+    name: "gemini-3.5-flash-extended",
+    aliases: ["gemini-3-flash-thinking-advanced", "gemini-thinking-advanced"],
+    header: buildModelHeader("e051ce1aa80aa576", 2),
+    thinkingLevel: "extended",
+  },
+  {
+    name: "gemini-3.1-pro-extended",
+    aliases: ["gemini-3-pro-advanced", "gemini-pro-advanced"],
+    header: buildModelHeader("e6fa609c3fa255c0", 2),
+    thinkingLevel: "extended",
+  },
 ];
 
-export const DEFAULT_MODEL = "gemini-3-flash";
-export const GEMINI_MODEL_MAP = new Map(GEMINI_MODELS.map((model) => [model.name, model]));
+export const DEFAULT_MODEL = "gemini-3.1-flash-lite";
+export const GEMINI_MODEL_MAP = new Map(
+  GEMINI_MODELS.flatMap((model) => [
+    [model.name, model] as const,
+    ...(model.aliases ?? []).map((alias) => [alias, model] as const),
+  ]),
+);

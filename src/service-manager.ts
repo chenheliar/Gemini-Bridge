@@ -12,7 +12,7 @@ import {
 } from "./cookies.js";
 import { parseAnchorUrl } from "./anchors.js";
 import { loadConfig, saveConfig } from "./config-store.js";
-import { DEFAULT_MODEL, GEMINI_MODELS } from "./constants.js";
+import { DEFAULT_MODEL, GEMINI_MODEL_MAP, GEMINI_MODELS } from "./constants.js";
 import { AppError, AuthError } from "./errors.js";
 import { GeminiWebClient } from "./gemini-client.js";
 import { validateProxyConnection } from "./http-client.js";
@@ -317,16 +317,17 @@ export class ServiceManager {
 
   async updateDefaultModel(model: string) {
     const normalizedModel = model.trim();
-    if (!this.getModels().includes(normalizedModel)) {
+    const resolvedModel = GEMINI_MODEL_MAP.get(normalizedModel);
+    if (!resolvedModel) {
       throw new AppError(`Unknown model: ${normalizedModel}`, 400, "invalid_model");
     }
 
     this.config = saveConfig({
       ...this.config,
-      defaultModel: normalizedModel,
+      defaultModel: resolvedModel.name,
     });
 
-    this.log("info", `Default model updated to ${normalizedModel}.`);
+    this.log("info", `Default model updated to ${resolvedModel.name}.`);
 
     if (this.running) {
       await this.restartService();
