@@ -455,14 +455,20 @@ export default function App() {
   }
 
   const handleTest = async () => {
-    await runAction(
-      '',
-      async () => {
-        const result = await requestJson<{ ok: boolean; model: string; latencyMs: number; content: string }>('/admin/test', { method: 'POST' })
-        setBanner({ tone: 'success', text: `测试通过 — ${result.model}，延迟 ${result.latencyMs}ms，响应：${result.content}` })
-      },
-      '连接测试失败，请检查 Cookie 和代理设置',
-    )
+    setBusyAction('测试中…')
+    setBanner(null)
+
+    try {
+      const result = await requestJson<{ ok: boolean; model: string; latencyMs: number; content: string }>('/admin/test', { method: 'POST' })
+      setBanner({ tone: 'success', text: `测试通过 — ${result.model}，延迟 ${result.latencyMs}ms，响应：${result.content}` })
+    } catch (error) {
+      setBanner({
+        tone: 'error',
+        text: error instanceof Error ? error.message : '连接测试失败，请检查 Cookie 和代理设置',
+      })
+    } finally {
+      setBusyAction(null)
+    }
   }
 
   const handleClearHistory = async () => {
