@@ -775,8 +775,10 @@ app.post("/v1/chat/completions", async (req, res, next) => {
 
         // Prevent Node.js from timing out the upstream socket during
         // Gemini Extended Thinking pauses (30–120 s of silence).
+        // Disable Nagle's algorithm so small heartbeat writes are sent immediately.
         if (req.socket) {
           req.socket.setTimeout(0);
+          req.socket.setNoDelay(true);
         }
 
         writeSse(
@@ -892,7 +894,16 @@ app.post("/v1/chat/completions", async (req, res, next) => {
 
         let fullContent = "";
         let heartbeatTimer: ReturnType<typeof setInterval> | null = setInterval(() => {
-          writeSse(": heartbeat\n\n");
+          writeSse(
+            `data: ${JSON.stringify(
+              buildChatCompletionChunk({
+                responseId: context.responseId,
+                modelName: context.modelName,
+                delta: {},
+                created: context.created,
+              }),
+            )}\n\n`,
+          );
         }, 15_000);
 
         try {
@@ -906,7 +917,16 @@ app.post("/v1/chat/completions", async (req, res, next) => {
             if (heartbeatTimer) {
               clearInterval(heartbeatTimer);
               heartbeatTimer = setInterval(() => {
-                writeSse(": heartbeat\n\n");
+                writeSse(
+                  `data: ${JSON.stringify(
+                    buildChatCompletionChunk({
+                      responseId: context.responseId,
+                      modelName: context.modelName,
+                      delta: {},
+                      created: context.created,
+                    }),
+                  )}\n\n`,
+                );
               }, 15_000);
             }
             fullContent = upstreamChunk.fullText || `${fullContent}${upstreamChunk.delta}`;
@@ -1039,8 +1059,10 @@ app.post("/v1/responses", async (req, res, next) => {
 
         // Prevent Node.js from timing out the upstream socket during
         // Gemini Extended Thinking pauses (30–120 s of silence).
+        // Disable Nagle's algorithm so small heartbeat writes are sent immediately.
         if (req.socket) {
           req.socket.setTimeout(0);
+          req.socket.setNoDelay(true);
         }
 
         let sequenceNumber = 1;
@@ -1195,7 +1217,16 @@ app.post("/v1/responses", async (req, res, next) => {
 
         let fullContent = "";
         let heartbeatTimer: ReturnType<typeof setInterval> | null = setInterval(() => {
-          writeSse(": heartbeat\n\n");
+          writeSse(
+            `data: ${JSON.stringify(
+              buildChatCompletionChunk({
+                responseId: context.responseId,
+                modelName: context.modelName,
+                delta: {},
+                created: context.created,
+              }),
+            )}\n\n`,
+          );
         }, 15_000);
 
         try {
@@ -1209,7 +1240,16 @@ app.post("/v1/responses", async (req, res, next) => {
             if (heartbeatTimer) {
               clearInterval(heartbeatTimer);
               heartbeatTimer = setInterval(() => {
-                writeSse(": heartbeat\n\n");
+                writeSse(
+                  `data: ${JSON.stringify(
+                    buildChatCompletionChunk({
+                      responseId: context.responseId,
+                      modelName: context.modelName,
+                      delta: {},
+                      created: context.created,
+                    }),
+                  )}\n\n`,
+                );
               }, 15_000);
             }
             fullContent = upstreamChunk.fullText || `${fullContent}${upstreamChunk.delta}`;
@@ -1449,7 +1489,7 @@ app.get("/admin/logs/stream", (req, res) => {
   }
 
   const heartbeatTimer = setInterval(() => {
-    res.write(": heartbeat\n\n");
+    res.write("data: {}\n\n");
   }, 15_000);
 
   manager.getLogs(200).forEach((entry) => {
@@ -1480,7 +1520,7 @@ app.get("/admin/conversations/stream", (req, res) => {
   }
 
   const heartbeatTimer = setInterval(() => {
-    res.write(": heartbeat\n\n");
+    res.write("data: {}\n\n");
   }, 15_000);
 
   const onConversation = (entry: unknown) => {
