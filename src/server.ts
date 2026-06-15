@@ -1554,11 +1554,14 @@ app.post("/admin/test", async (req, res, next) => {
   try {
     const startMs = Date.now();
     const client = await manager.ensureClient();
-    const modelName = manager.getConfig().defaultModel;
+    const config = manager.getConfig();
+    const modelName = config.defaultModel;
+    const anchorConfig = manager.getAnchor();
     const text = await client.generateText("Reply with exactly one word: bridge-test-ok", {
       modelName,
       temporary: true,
       maxAttempts: 1,
+      sourcePath: anchorConfig.valid ? anchorConfig.sourcePath : null,
     });
     res.json({
       ok: true,
