@@ -16,6 +16,8 @@ cookies.json
 diagnose-result.json
 data/config.json
 data/session-memory.json
+data/*.db-shm
+data/*.db-wal
 tmp_server_snapshot.txt
 .tmp/
 research/gemini-web-probe/artifacts/
@@ -35,3 +37,7 @@ research/gemini-web-probe/artifacts/
 .workbuddy/
 .playwright-cli
 .playwright-cli/
+.reasonix/
+reasonix.toml
+.codegraph/
+testcookies.json
