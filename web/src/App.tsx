@@ -4,7 +4,6 @@ import {
   Activity,
   Copy,
   Cookie,
-  FileText,
   Link2,
   Network,
   PlayCircle,
@@ -13,7 +12,8 @@ import {
   Server,
   Square,
   TerminalSquare,
-  X,
+  Trash2,
+  Zap,
 } from 'lucide-react'
 import './App.css'
 import { copyText } from './clipboard'
@@ -208,7 +208,6 @@ export default function App() {
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [banner, setBanner] = useState<Banner | null>(null)
   const [busyAction, setBusyAction] = useState<string | null>(null)
-  const [guideOpen, setGuideOpen] = useState(false)
   const reconnectTimer = useRef<number | null>(null)
 
   const browserApiBase = new URL('/v1', window.location.origin).toString()
@@ -342,19 +341,6 @@ export default function App() {
     }
   }, [])
 
-  useEffect(() => {
-    if (!guideOpen) return undefined
-
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setGuideOpen(false)
-      }
-    }
-
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [guideOpen])
-
   const runAction = async (successText: string, handler: () => Promise<void>, fallbackError?: string) => {
     setBusyAction(successText)
     setBanner(null)
@@ -468,62 +454,35 @@ export default function App() {
     }
   }
 
+  const handleTest = async () => {
+    await runAction(
+      '',
+      async () => {
+        const result = await requestJson<{ ok: boolean; model: string; latencyMs: number; content: string }>('/admin/test', { method: 'POST' })
+        setBanner({ tone: 'success', text: `测试通过 — ${result.model}，延迟 ${result.latencyMs}ms，响应：${result.content}` })
+      },
+      '连接测试失败，请检查 Cookie 和代理设置',
+    )
+  }
+
+  const handleClearHistory = async () => {
+    if (!window.confirm('确认清除所有历史请求数据和流量统计？此操作不可恢复。')) return
+
+    await runAction(
+      '历史数据已清除',
+      async () => {
+        await requestJson('/admin/data/reset', { method: 'POST' })
+        await refreshDashboard()
+      },
+      '清除历史数据失败',
+    )
+  }
+
   return (
     <>
       <a className="skip-link" href="#main-content">
         跳到主要内容
       </a>
-
-      {guideOpen ? (
-        <div className="modal-backdrop" onClick={() => setGuideOpen(false)} role="presentation">
-          <section
-            aria-labelledby="guide-title"
-            aria-modal="true"
-            className="modal-panel"
-            onClick={(event) => event.stopPropagation()}
-            role="dialog"
-          >
-            <div className="panel-head">
-              <div className="panel-title">
-                <FileText size={18} />
-                <h2 id="guide-title">使用说明</h2>
-              </div>
-              <button
-                aria-label="关闭使用说明"
-                className="icon-button"
-                onClick={() => setGuideOpen(false)}
-                type="button"
-              >
-                <X size={16} />
-              </button>
-            </div>
-
-            <div className="guide-list">
-              <div className="guide-step">
-                <strong>1. 先保存 Cookie</strong>
-                <p>把浏览器导出的 Cookie JSON 粘贴进来，然后点“保存 Cookie”。没有这一步，服务无法正常工作，推荐使用浏览器插件 Global Cookie Manager</p>
-              </div>
-              <div className="guide-step">
-                <strong>2. 选择默认模型</strong>
-                <p>从下拉列表里选一个模型，再点“保存模型”。以后新请求会默认走这个模型。</p>
-              </div>
-              <div className="guide-step">
-                <strong>3. 点击启动</strong>
-                <p>启动后就可以用接口地址连接其他工具。接口地址如果被占用，应用会自动切换到可用端口。</p>
-              </div>
-              <div className="guide-step">
-                <strong>4. 看不懂的设置先不要动</strong>
-                <p>代理和来源会话都不是必须项。只有你明确知道用途时，再去填写高级设置。</p>
-              </div>
-            </div>
-
-            <div className="guide-note">
-              本机接口地址：{localApiBase}
-              {lanApiBases.length > 0 ? ` ｜ 局域网接口地址：${lanApiBases.join(' / ')}` : ''}
-            </div>
-          </section>
-        </div>
-      ) : null}
 
       <main className="page-shell app-shell" id="main-content">
         <header className="page-header">
@@ -534,9 +493,9 @@ export default function App() {
           </div>
 
           <div className="header-actions">
-            <button className="soft-button" onClick={() => setGuideOpen(true)} type="button">
-              <FileText size={16} />
-              使用说明
+            <button className="primary-button" disabled={isBusy} onClick={() => void handleTest()} type="button">
+              <Zap size={16} />
+              测试连接
             </button>
 
             <button className="soft-button" onClick={() => void loadInitialData()} type="button">
@@ -758,6 +717,14 @@ export default function App() {
                 <div className="log-empty">当前还没有请求流量，等接口被调用后这里会自动出现统计。</div>
               )}
             </div>
+
+            <div className="panel-foot">
+              <span className="subtle">清除后不可恢复，仅影响本应用记录的本地数据。</span>
+              <button className="soft-button" disabled={isBusy} onClick={() => void handleClearHistory()} type="button">
+                <Trash2 size={16} />
+                清除历史数据
+              </button>
+            </div>
           </article>
 
           <article className="panel">
@@ -774,20 +741,22 @@ export default function App() {
               <span>保存后会自动重新检查。</span>
             </div>
 
-            <label className="field-label" htmlFor="cookie-input">
-              粘贴浏览器导出的 Cookie JSON
-            </label>
-            <textarea
-              className="editor"
-              id="cookie-input"
-              onChange={(event) => {
-                setCookieText(event.target.value)
-                setCookieDirty(true)
-              }}
-              placeholder='例如：[{"name":"__Secure-1PSID","value":"xxx"}]'
-              spellCheck={false}
-              value={cookieText}
-            />
+            <details className="cookie-details">
+              <summary className="field-label cookie-toggle">展开编辑 Cookie</summary>
+              <label className="field-label" htmlFor="cookie-input">
+                粘贴浏览器导出的 Cookie JSON
+              </label>
+              <textarea
+                className="editor"
+                id="cookie-input"
+                onChange={(event) => {
+                  setCookieText(event.target.value)
+                  setCookieDirty(true)
+                }}
+                placeholder='例如：[{"name":"__Secure-1PSID","value":"xxx"}]'
+                spellCheck={false}
+                value={cookieText}
+              />
 
             <div className="panel-foot">
               <span className="subtle">关键项主要是 `__Secure-1PSID` 和 `__Secure-1PSIDTS`。</span>
@@ -796,6 +765,7 @@ export default function App() {
                 保存 Cookie
               </button>
             </div>
+            </details>
           </article>
 
           <details className="panel advanced-panel">

@@ -250,4 +250,8 @@ export class StateStore {
       topModels,
     };
   }
+
+  clearTraffic(): void {
+    this.db.exec("DELETE FROM traffic_events;");
+  }
 }

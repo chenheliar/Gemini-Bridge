@@ -1545,6 +1545,32 @@ app.get("/admin/conversations/:id", (req, res) => {
   res.json(conversation);
 });
 
+app.post("/admin/data/reset", (req, res) => {
+  const result = manager.clearHistory();
+  res.json({ ok: true, ...result });
+});
+
+app.post("/admin/test", async (req, res, next) => {
+  try {
+    const startMs = Date.now();
+    const client = await manager.ensureClient();
+    const modelName = manager.getConfig().defaultModel;
+    const text = await client.generateText("Reply with exactly one word: bridge-test-ok", {
+      modelName,
+      temporary: true,
+      maxAttempts: 1,
+    });
+    res.json({
+      ok: true,
+      model: modelName,
+      latencyMs: Date.now() - startMs,
+      content: text.trim(),
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.post("/admin/service", async (req, res, next) => {
   try {
     const action = String(req.body?.action ?? "").toLowerCase();

@@ -415,3 +415,23 @@
     padding: 16px;
   }
 }
+
+.cookie-details {
+  margin-top: 12px;
+}
+
+.cookie-details summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 8px 0;
+}
+
+.cookie-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.cookie-details .editor {
+  margin-top: 8px;
+  margin-bottom: 12px;
+  min-height: 120px;
+}

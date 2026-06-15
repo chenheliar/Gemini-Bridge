@@ -360,4 +360,8 @@ export class HistoryStore {
       limit: query.limit ?? 500,
     });
   }
+
+  clearConversations(): void {
+    this.db.exec("DELETE FROM conversations;");
+  }
 }

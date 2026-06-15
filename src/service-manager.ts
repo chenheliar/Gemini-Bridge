@@ -199,6 +199,19 @@ export class ServiceManager {
     return this.sessionMemory.clear(sessionKey);
   }
 
+  clearHistory(): { conversationsDeleted: number } {
+    const before = this.historyStore.getConversationCount();
+    this.historyStore.clearConversations();
+    this.stateStore.clearTraffic();
+    this.logs.length = 0;
+    this.conversations.length = 0;
+    this.requestCount = 0;
+    this.errorCount = 0;
+    this.lastRequestAt = null;
+    this.log("info", `Cleared all history: ${before} conversations and traffic stats removed.`);
+    return { conversationsDeleted: before };
+  }
+
   getModels(): string[] {
     return GEMINI_MODELS.map((item) => item.name);
   }
