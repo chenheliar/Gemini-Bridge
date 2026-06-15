@@ -16,7 +16,11 @@ import {
   buildGeminiPrompt,
   buildChatCompletionChunk,
   buildChatCompletionPayload,
+  buildChatCompletionToolCallPayload,
   buildOpenAiError,
+  buildResponseFunctionCallArgumentsDelta,
+  buildResponseFunctionCallArgumentsDone,
+  buildResponseFunctionCallPayload,
   buildResponseOutputTextDelta,
   buildResponsePayload,
   chatCompletionRequestSchema,
@@ -26,6 +30,13 @@ import {
   resolveRequestedModel,
 } from "./openai-compat.js";
 import { ServiceManager } from "./service-manager.js";
+import {
+  buildToolPlanningPrompt,
+  normalizeChatTools,
+  parseToolDecision,
+  shouldUseToolPlanner,
+  toResponseFunctionCall,
+} from "./tool-calling.js";
 import type { ConversationLog } from "./types.js";
 
 const manager = new ServiceManager();
@@ -363,6 +374,8 @@ type CompletedGeneration = {
   refusalKind: RefusalKind | null;
 };
 
+type ToolGenerationResult = Awaited<ReturnType<typeof generateToolDecision>>;
+
 function parseRequestBody<T>(parser: () => T): T {
   try {
     return parser();
@@ -580,6 +593,47 @@ async function generateStableText(params: {
   };
 }
 
+async function generateToolDecision(params: {
+  client: Awaited<ReturnType<ServiceManager["ensureClient"]>>;
+  context: PreparedGenerationContext;
+  tools: ReturnType<typeof normalizeChatTools>;
+  toolChoice: unknown;
+}) {
+  const toolPrompt = buildToolPlanningPrompt({
+    promptText: params.context.promptText,
+    tools: params.tools,
+    toolChoice: params.toolChoice,
+  });
+  const generation = await generateStableText({
+    client: params.client,
+    promptText: toolPrompt,
+    modelName: params.context.modelName,
+    activeAnchorSourcePath: params.context.activeAnchorSourcePath,
+    profile: params.context.generationProfile,
+  });
+
+  return {
+    generation,
+    decision: parseToolDecision(generation.text, params.tools),
+  };
+}
+
+function completeConversationFromToolResult(
+  conversationLog: ConversationLog,
+  context: PreparedGenerationContext,
+  toolResult: ToolGenerationResult,
+): string {
+  const content = toolResult.decision.type === "tool_calls"
+    ? JSON.stringify(toolResult.decision.toolCalls)
+    : toolResult.decision.content;
+  updateConversationLogAfterGeneration(conversationLog, context, {
+    content,
+    completionStage: toolResult.generation.completionStage,
+    refusalKind: toolResult.generation.refusalKind,
+  });
+  return content;
+}
+
 process.on("unhandledRejection", (reason) => {
   const message = reason instanceof Error ? reason.stack || reason.message : String(reason);
   manager.log("error", `Unhandled promise rejection: ${message}`);
@@ -699,6 +753,7 @@ async function handleTextGenerationRequest(
 app.post("/v1/chat/completions", async (req, res, next) => {
   const body = parseRequestBody(() => chatCompletionRequestSchema.parse(req.body));
   const messages = body.messages as Array<Record<string, unknown>>;
+  const tools = normalizeChatTools(body.tools);
 
   await handleTextGenerationRequest(
     req,
@@ -727,6 +782,106 @@ app.post("/v1/chat/completions", async (req, res, next) => {
             }),
           )}\n\n`,
         );
+
+        if (shouldUseToolPlanner(tools, body.tool_choice)) {
+          const toolResult = await generateToolDecision({
+            client,
+            context,
+            tools,
+            toolChoice: body.tool_choice,
+          });
+
+          if (toolResult.decision.type === "tool_calls") {
+            completeConversationFromToolResult(conversationLog, context, toolResult);
+            const toolCall = toolResult.decision.toolCalls[0];
+            if (!toolCall) {
+              throw new InvalidRequestError("Tool planner returned no tool calls.", "empty_tool_calls");
+            }
+            writeSse(
+              `data: ${JSON.stringify(
+                buildChatCompletionChunk({
+                  responseId: context.responseId,
+                  modelName: context.modelName,
+                  delta: {
+                    tool_calls: [
+                      {
+                        index: 0,
+                        id: toolCall.id,
+                        type: "function",
+                        function: {
+                          name: toolCall.function.name,
+                          arguments: "",
+                        },
+                      },
+                    ],
+                  },
+                  created: context.created,
+                }),
+              )}\n\n`,
+            );
+            writeSse(
+              `data: ${JSON.stringify(
+                buildChatCompletionChunk({
+                  responseId: context.responseId,
+                  modelName: context.modelName,
+                  delta: {
+                    tool_calls: [
+                      {
+                        index: 0,
+                        function: {
+                          arguments: toolCall.function.arguments,
+                        },
+                      },
+                    ],
+                  },
+                  created: context.created,
+                }),
+              )}\n\n`,
+            );
+            writeSse(
+              `data: ${JSON.stringify(
+                buildChatCompletionChunk({
+                  responseId: context.responseId,
+                  modelName: context.modelName,
+                  delta: {},
+                  created: context.created,
+                  finishReason: "tool_calls",
+                }),
+              )}\n\n`,
+            );
+            writeSse("data: [DONE]\n\n");
+            res.end();
+            return 0;
+          }
+
+          const content = completeConversationFromToolResult(conversationLog, context, toolResult);
+          if (content) {
+            writeSse(
+              `data: ${JSON.stringify(
+                buildChatCompletionChunk({
+                  responseId: context.responseId,
+                  modelName: context.modelName,
+                  delta: { content },
+                  created: context.created,
+                }),
+              )}\n\n`,
+            );
+          }
+          writeSse(
+            `data: ${JSON.stringify(
+              buildChatCompletionChunk({
+                responseId: context.responseId,
+                modelName: context.modelName,
+                delta: {},
+                created: context.created,
+                finishReason: "stop",
+              }),
+            )}\n\n`,
+          );
+          writeSse("data: [DONE]\n\n");
+          res.end();
+          return 0;
+        }
 
         let fullContent = "";
         for await (const upstreamChunk of client.streamText(context.promptText, {
@@ -775,6 +930,39 @@ app.post("/v1/chat/completions", async (req, res, next) => {
         return 0;
       }
 
+      if (shouldUseToolPlanner(tools, body.tool_choice)) {
+        const toolResult = await generateToolDecision({
+          client,
+          context,
+          tools,
+          toolChoice: body.tool_choice,
+        });
+
+        if (toolResult.decision.type === "tool_calls") {
+          completeConversationFromToolResult(conversationLog, context, toolResult);
+          const payload = buildChatCompletionToolCallPayload({
+            responseId: context.responseId,
+            modelName: context.modelName,
+            toolCalls: toolResult.decision.toolCalls,
+            promptText: context.promptText,
+            created: context.created,
+          });
+          res.json(payload);
+          return measureJsonBytes(payload);
+        }
+
+        completeConversationFromToolResult(conversationLog, context, toolResult);
+        const payload = buildChatCompletionPayload({
+          responseId: context.responseId,
+          modelName: context.modelName,
+          content: toolResult.decision.content,
+          promptText: context.promptText,
+          created: context.created,
+        });
+        res.json(payload);
+        return measureJsonBytes(payload);
+      }
+
       const generation = await generateStableText({
         client,
         promptText: context.promptText,
@@ -803,6 +991,7 @@ app.post("/v1/chat/completions", async (req, res, next) => {
 app.post("/v1/responses", async (req, res, next) => {
   const body = parseRequestBody(() => responseRequestSchema.parse(req.body));
   const messages = responseInputToMessages(body);
+  const tools = normalizeChatTools(body.tools);
 
   await handleTextGenerationRequest(
     req,
@@ -840,6 +1029,138 @@ app.post("/v1/responses", async (req, res, next) => {
             }),
           )}\n\n`,
         );
+
+        if (shouldUseToolPlanner(tools, body.tool_choice)) {
+          const toolResult = await generateToolDecision({
+            client,
+            context,
+            tools,
+            toolChoice: body.tool_choice,
+          });
+
+          if (toolResult.decision.type === "tool_calls") {
+            completeConversationFromToolResult(conversationLog, context, toolResult);
+            const toolCall = toolResult.decision.toolCalls[0];
+            if (!toolCall) {
+              throw new InvalidRequestError("Tool planner returned no tool calls.", "empty_tool_calls");
+            }
+            const responseCall = toResponseFunctionCall(toolCall);
+            const item = {
+              id: responseCall.id,
+              type: "function_call",
+              status: "in_progress",
+              call_id: responseCall.callId,
+              name: responseCall.name,
+              arguments: "",
+            };
+
+            sequenceNumber += 1;
+            writeSse(
+              `event: response.output_item.added\ndata: ${JSON.stringify({
+                type: "response.output_item.added",
+                sequence_number: sequenceNumber,
+                response_id: context.responseId,
+                output_index: 0,
+                item,
+              })}\n\n`,
+            );
+            sequenceNumber += 1;
+            writeSse(
+              `event: response.function_call_arguments.delta\ndata: ${JSON.stringify(
+                buildResponseFunctionCallArgumentsDelta({
+                  responseId: context.responseId,
+                  itemId: responseCall.id,
+                  delta: responseCall.argumentsText,
+                  sequenceNumber,
+                }),
+              )}\n\n`,
+            );
+            sequenceNumber += 1;
+            writeSse(
+              `event: response.function_call_arguments.done\ndata: ${JSON.stringify(
+                buildResponseFunctionCallArgumentsDone({
+                  responseId: context.responseId,
+                  itemId: responseCall.id,
+                  argumentsText: responseCall.argumentsText,
+                  sequenceNumber,
+                }),
+              )}\n\n`,
+            );
+            sequenceNumber += 1;
+            writeSse(
+              `event: response.output_item.done\ndata: ${JSON.stringify({
+                type: "response.output_item.done",
+                sequence_number: sequenceNumber,
+                response_id: context.responseId,
+                output_index: 0,
+                item: {
+                  ...item,
+                  status: "completed",
+                  arguments: responseCall.argumentsText,
+                },
+              })}\n\n`,
+            );
+            sequenceNumber += 1;
+            writeSse(
+              `event: response.completed\ndata: ${JSON.stringify({
+                type: "response.completed",
+                sequence_number: sequenceNumber,
+                response: buildResponseFunctionCallPayload({
+                  responseId: context.responseId,
+                  callId: responseCall.callId,
+                  itemId: responseCall.id,
+                  modelName: context.modelName,
+                  name: responseCall.name,
+                  argumentsText: responseCall.argumentsText,
+                  promptText: context.promptText,
+                  created: context.created,
+                  instructions: body.instructions ?? null,
+                  maxOutputTokens: body.max_output_tokens ?? null,
+                  metadata: body.metadata ?? null,
+                }),
+              })}\n\n`,
+            );
+            writeSse("data: [DONE]\n\n");
+            res.end();
+            return 0;
+          }
+
+          const content = completeConversationFromToolResult(conversationLog, context, toolResult);
+          if (content) {
+            sequenceNumber += 1;
+            writeSse(
+              `event: response.output_text.delta\ndata: ${JSON.stringify(
+                buildResponseOutputTextDelta({
+                  responseId: context.responseId,
+                  messageId,
+                  delta: content,
+                  sequenceNumber,
+                }),
+              )}\n\n`,
+            );
+          }
+          sequenceNumber += 1;
+          writeSse(
+            `event: response.completed\ndata: ${JSON.stringify({
+              type: "response.completed",
+              sequence_number: sequenceNumber,
+              response: buildResponsePayload({
+                responseId: context.responseId,
+                messageId,
+                modelName: context.modelName,
+                content,
+                promptText: context.promptText,
+                created: context.created,
+                instructions: body.instructions ?? null,
+                maxOutputTokens: body.max_output_tokens ?? null,
+                metadata: body.metadata ?? null,
+              }),
+            })}\n\n`,
+          );
+          writeSse("data: [DONE]\n\n");
+          res.end();
+          return 0;
+        }
 
         let fullContent = "";
         for await (const upstreamChunk of client.streamText(context.promptText, {
@@ -894,6 +1215,54 @@ app.post("/v1/responses", async (req, res, next) => {
         writeSse("data: [DONE]\n\n");
         res.end();
         return 0;
+      }
+
+      if (shouldUseToolPlanner(tools, body.tool_choice)) {
+        const toolResult = await generateToolDecision({
+          client,
+          context,
+          tools,
+          toolChoice: body.tool_choice,
+        });
+
+        if (toolResult.decision.type === "tool_calls") {
+          completeConversationFromToolResult(conversationLog, context, toolResult);
+          const toolCall = toolResult.decision.toolCalls[0];
+          if (!toolCall) {
+            throw new InvalidRequestError("Tool planner returned no tool calls.", "empty_tool_calls");
+          }
+          const responseCall = toResponseFunctionCall(toolCall);
+          const payload = buildResponseFunctionCallPayload({
+            responseId: context.responseId,
+            callId: responseCall.callId,
+            itemId: responseCall.id,
+            modelName: context.modelName,
+            name: responseCall.name,
+            argumentsText: responseCall.argumentsText,
+            promptText: context.promptText,
+            created: context.created,
+            instructions: body.instructions ?? null,
+            maxOutputTokens: body.max_output_tokens ?? null,
+            metadata: body.metadata ?? null,
+          });
+          res.json(payload);
+          return measureJsonBytes(payload);
+        }
+
+        completeConversationFromToolResult(conversationLog, context, toolResult);
+        const payload = buildResponsePayload({
+          responseId: context.responseId,
+          messageId,
+          modelName: context.modelName,
+          content: toolResult.decision.content,
+          promptText: context.promptText,
+          created: context.created,
+          instructions: body.instructions ?? null,
+          maxOutputTokens: body.max_output_tokens ?? null,
+          metadata: body.metadata ?? null,
+        });
+        res.json(payload);
+        return measureJsonBytes(payload);
       }
 
       const generation = await generateStableText({

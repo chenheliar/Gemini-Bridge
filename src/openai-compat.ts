@@ -15,6 +15,9 @@ export const chatCompletionRequestSchema = z.object({
   max_tokens: z.number().optional(),
   user: z.string().optional(),
   metadata: z.record(z.string(), z.any()).optional(),
+  tools: z.array(z.any()).optional(),
+  tool_choice: z.any().optional(),
+  parallel_tool_calls: z.boolean().optional(),
 }).passthrough();
 
 export type ChatCompletionRequest = z.infer<typeof chatCompletionRequestSchema>;
@@ -28,6 +31,9 @@ export const responseRequestSchema = z.object({
   max_output_tokens: z.number().optional(),
   user: z.string().optional(),
   metadata: z.record(z.string(), z.any()).optional(),
+  tools: z.array(z.any()).optional(),
+  tool_choice: z.any().optional(),
+  parallel_tool_calls: z.boolean().optional(),
 }).passthrough();
 
 export type ResponseRequest = z.infer<typeof responseRequestSchema>;
@@ -564,6 +570,108 @@ export function buildResponsePayload(params: {
   };
 }
 
+export function buildResponseFunctionCallPayload(params: {
+  responseId: string;
+  callId: string;
+  itemId: string;
+  modelName: string;
+  name: string;
+  argumentsText: string;
+  promptText: string;
+  created?: number;
+  instructions?: string | null;
+  maxOutputTokens?: number | null;
+  metadata?: Record<string, unknown> | null;
+  status?: "completed" | "in_progress";
+}) {
+  const created = params.created ?? Math.floor(Date.now() / 1000);
+  const promptTokens = approxTokens(params.promptText);
+  const completionTokens = approxTokens(params.argumentsText);
+  const status = params.status ?? "completed";
+  const item = {
+    id: params.itemId,
+    type: "function_call",
+    status,
+    call_id: params.callId,
+    name: params.name,
+    arguments: params.argumentsText,
+  };
+
+  return {
+    id: params.responseId,
+    object: "response",
+    created_at: created,
+    status,
+    background: false,
+    error: null,
+    incomplete_details: null,
+    instructions: params.instructions ?? null,
+    max_output_tokens: params.maxOutputTokens ?? null,
+    model: params.modelName,
+    output: status === "completed" ? [item] : [],
+    output_text: "",
+    parallel_tool_calls: true,
+    previous_response_id: null,
+    store: false,
+    text: {
+      format: {
+        type: "text",
+      },
+    },
+    metadata: params.metadata ?? {},
+    usage: {
+      input_tokens: promptTokens,
+      output_tokens: completionTokens,
+      total_tokens: promptTokens + completionTokens,
+      output_tokens_details: {
+        reasoning_tokens: 0,
+      },
+    },
+  };
+}
+
+export function buildChatCompletionToolCallPayload(params: {
+  responseId: string;
+  modelName: string;
+  toolCalls: Array<{
+    id: string;
+    type: "function";
+    function: {
+      name: string;
+      arguments: string;
+    };
+  }>;
+  promptText: string;
+  created?: number;
+}) {
+  const created = params.created ?? Math.floor(Date.now() / 1000);
+  const promptTokens = approxTokens(params.promptText);
+  const completionTokens = approxTokens(JSON.stringify(params.toolCalls));
+
+  return {
+    id: params.responseId,
+    object: "chat.completion",
+    created,
+    model: params.modelName,
+    choices: [
+      {
+        index: 0,
+        message: {
+          role: "assistant",
+          content: null,
+          tool_calls: params.toolCalls,
+        },
+        finish_reason: "tool_calls",
+      },
+    ],
+    usage: {
+      prompt_tokens: promptTokens,
+      completion_tokens: completionTokens,
+      total_tokens: promptTokens + completionTokens,
+    },
+  };
+}
+
 export function buildResponseOutputTextDelta(params: {
   responseId: string;
   messageId: string;
@@ -580,6 +688,40 @@ export function buildResponseOutputTextDelta(params: {
     output_index: params.outputIndex ?? 0,
     content_index: params.contentIndex ?? 0,
     delta: params.delta,
+  };
+}
+
+export function buildResponseFunctionCallArgumentsDelta(params: {
+  responseId: string;
+  itemId: string;
+  delta: string;
+  sequenceNumber: number;
+  outputIndex?: number;
+}) {
+  return {
+    type: "response.function_call_arguments.delta",
+    sequence_number: params.sequenceNumber,
+    response_id: params.responseId,
+    item_id: params.itemId,
+    output_index: params.outputIndex ?? 0,
+    delta: params.delta,
+  };
+}
+
+export function buildResponseFunctionCallArgumentsDone(params: {
+  responseId: string;
+  itemId: string;
+  argumentsText: string;
+  sequenceNumber: number;
+  outputIndex?: number;
+}) {
+  return {
+    type: "response.function_call_arguments.done",
+    sequence_number: params.sequenceNumber,
+    response_id: params.responseId,
+    item_id: params.itemId,
+    output_index: params.outputIndex ?? 0,
+    arguments: params.argumentsText,
   };
 }
 
