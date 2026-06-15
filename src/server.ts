@@ -852,7 +852,7 @@ app.post("/v1/chat/completions", async (req, res, next) => {
                 buildChatCompletionChunk({
                   responseId: context.responseId,
                   modelName: context.modelName,
-                  delta: {},
+                  delta: { content: "" },
                   created: context.created,
                   finishReason: "tool_calls",
                 }),
@@ -881,7 +881,7 @@ app.post("/v1/chat/completions", async (req, res, next) => {
               buildChatCompletionChunk({
                 responseId: context.responseId,
                 modelName: context.modelName,
-                delta: {},
+                delta: { content: "" },
                 created: context.created,
                 finishReason: "stop",
               }),
@@ -899,7 +899,7 @@ app.post("/v1/chat/completions", async (req, res, next) => {
               buildChatCompletionChunk({
                 responseId: context.responseId,
                 modelName: context.modelName,
-                delta: {},
+                delta: { content: "" },
                 created: context.created,
               }),
             )}\n\n`,
@@ -922,7 +922,7 @@ app.post("/v1/chat/completions", async (req, res, next) => {
                     buildChatCompletionChunk({
                       responseId: context.responseId,
                       modelName: context.modelName,
-                      delta: {},
+                      delta: { content: "" },
                       created: context.created,
                     }),
                   )}\n\n`,
@@ -963,7 +963,7 @@ app.post("/v1/chat/completions", async (req, res, next) => {
             buildChatCompletionChunk({
               responseId: context.responseId,
               modelName: context.modelName,
-              delta: {},
+              delta: { content: "" },
               created: context.created,
               finishReason: "stop",
             }),
@@ -1222,7 +1222,7 @@ app.post("/v1/responses", async (req, res, next) => {
               buildChatCompletionChunk({
                 responseId: context.responseId,
                 modelName: context.modelName,
-                delta: {},
+                delta: { content: "" },
                 created: context.created,
               }),
             )}\n\n`,
@@ -1245,7 +1245,7 @@ app.post("/v1/responses", async (req, res, next) => {
                     buildChatCompletionChunk({
                       responseId: context.responseId,
                       modelName: context.modelName,
-                      delta: {},
+                      delta: { content: "" },
                       created: context.created,
                     }),
                   )}\n\n`,
