@@ -201,6 +201,7 @@ export class BrowserHttpClient {
         headers: this.buildHeaders(headers),
         params,
         responseType: "stream",
+        timeout: 0,
       }),
     );
   }

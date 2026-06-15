@@ -770,7 +770,14 @@ app.post("/v1/chat/completions", async (req, res, next) => {
         res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
         res.setHeader("Cache-Control", "no-cache, no-transform");
         res.setHeader("Connection", "keep-alive");
+        res.setHeader("X-Accel-Buffering", "no");
         res.flushHeaders();
+
+        // Prevent Node.js from timing out the upstream socket during
+        // Gemini Extended Thinking pauses (30–120 s of silence).
+        if (req.socket) {
+          req.socket.setTimeout(0);
+        }
 
         writeSse(
           `data: ${JSON.stringify(
@@ -884,28 +891,45 @@ app.post("/v1/chat/completions", async (req, res, next) => {
         }
 
         let fullContent = "";
-        for await (const upstreamChunk of client.streamText(context.promptText, {
-          modelName: context.modelName,
-          temporary: true,
-          sourcePath: context.activeAnchorSourcePath,
-          maxAttempts: context.generationProfile.maxAttempts,
-          reinitializeOnRetry: context.generationProfile.reinitializeOnRetry,
-        })) {
-          fullContent = upstreamChunk.fullText || `${fullContent}${upstreamChunk.delta}`;
-          if (!upstreamChunk.delta) {
-            continue;
-          }
+        let heartbeatTimer: ReturnType<typeof setInterval> | null = setInterval(() => {
+          writeSse(": heartbeat\n\n");
+        }, 15_000);
 
-          writeSse(
-            `data: ${JSON.stringify(
-              buildChatCompletionChunk({
-                responseId: context.responseId,
-                modelName: context.modelName,
-                delta: { content: upstreamChunk.delta },
-                created: context.created,
-              }),
-            )}\n\n`,
-          );
+        try {
+          for await (const upstreamChunk of client.streamText(context.promptText, {
+            modelName: context.modelName,
+            temporary: true,
+            sourcePath: context.activeAnchorSourcePath,
+            maxAttempts: context.generationProfile.maxAttempts,
+            reinitializeOnRetry: context.generationProfile.reinitializeOnRetry,
+          })) {
+            if (heartbeatTimer) {
+              clearInterval(heartbeatTimer);
+              heartbeatTimer = setInterval(() => {
+                writeSse(": heartbeat\n\n");
+              }, 15_000);
+            }
+            fullContent = upstreamChunk.fullText || `${fullContent}${upstreamChunk.delta}`;
+            if (!upstreamChunk.delta) {
+              continue;
+            }
+
+            writeSse(
+              `data: ${JSON.stringify(
+                buildChatCompletionChunk({
+                  responseId: context.responseId,
+                  modelName: context.modelName,
+                  delta: { content: upstreamChunk.delta },
+                  created: context.created,
+                }),
+              )}\n\n`,
+            );
+          }
+        } finally {
+          if (heartbeatTimer) {
+            clearInterval(heartbeatTimer);
+            heartbeatTimer = null;
+          }
         }
 
         updateConversationLogAfterGeneration(conversationLog, context, {
@@ -1010,7 +1034,14 @@ app.post("/v1/responses", async (req, res, next) => {
         res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
         res.setHeader("Cache-Control", "no-cache, no-transform");
         res.setHeader("Connection", "keep-alive");
+        res.setHeader("X-Accel-Buffering", "no");
         res.flushHeaders();
+
+        // Prevent Node.js from timing out the upstream socket during
+        // Gemini Extended Thinking pauses (30–120 s of silence).
+        if (req.socket) {
+          req.socket.setTimeout(0);
+        }
 
         let sequenceNumber = 1;
         writeSse(
@@ -1163,29 +1194,46 @@ app.post("/v1/responses", async (req, res, next) => {
         }
 
         let fullContent = "";
-        for await (const upstreamChunk of client.streamText(context.promptText, {
-          modelName: context.modelName,
-          temporary: true,
-          sourcePath: context.activeAnchorSourcePath,
-          maxAttempts: context.generationProfile.maxAttempts,
-          reinitializeOnRetry: context.generationProfile.reinitializeOnRetry,
-        })) {
-          fullContent = upstreamChunk.fullText || `${fullContent}${upstreamChunk.delta}`;
-          if (!upstreamChunk.delta) {
-            continue;
-          }
+        let heartbeatTimer: ReturnType<typeof setInterval> | null = setInterval(() => {
+          writeSse(": heartbeat\n\n");
+        }, 15_000);
 
-          sequenceNumber += 1;
-          writeSse(
-            `event: response.output_text.delta\ndata: ${JSON.stringify(
-              buildResponseOutputTextDelta({
-                responseId: context.responseId,
-                messageId,
-                delta: upstreamChunk.delta,
-                sequenceNumber,
-              }),
-            )}\n\n`,
-          );
+        try {
+          for await (const upstreamChunk of client.streamText(context.promptText, {
+            modelName: context.modelName,
+            temporary: true,
+            sourcePath: context.activeAnchorSourcePath,
+            maxAttempts: context.generationProfile.maxAttempts,
+            reinitializeOnRetry: context.generationProfile.reinitializeOnRetry,
+          })) {
+            if (heartbeatTimer) {
+              clearInterval(heartbeatTimer);
+              heartbeatTimer = setInterval(() => {
+                writeSse(": heartbeat\n\n");
+              }, 15_000);
+            }
+            fullContent = upstreamChunk.fullText || `${fullContent}${upstreamChunk.delta}`;
+            if (!upstreamChunk.delta) {
+              continue;
+            }
+
+            sequenceNumber += 1;
+            writeSse(
+              `event: response.output_text.delta\ndata: ${JSON.stringify(
+                buildResponseOutputTextDelta({
+                  responseId: context.responseId,
+                  messageId,
+                  delta: upstreamChunk.delta,
+                  sequenceNumber,
+                }),
+              )}\n\n`,
+            );
+          }
+        } finally {
+          if (heartbeatTimer) {
+            clearInterval(heartbeatTimer);
+            heartbeatTimer = null;
+          }
         }
 
         updateConversationLogAfterGeneration(conversationLog, context, {
@@ -1393,7 +1441,16 @@ app.get("/admin/logs/stream", (req, res) => {
   res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
   res.setHeader("Cache-Control", "no-cache, no-transform");
   res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
   res.flushHeaders();
+
+  if (req.socket) {
+    req.socket.setTimeout(0);
+  }
+
+  const heartbeatTimer = setInterval(() => {
+    res.write(": heartbeat\n\n");
+  }, 15_000);
 
   manager.getLogs(200).forEach((entry) => {
     res.write(`data: ${JSON.stringify(entry)}\n\n`);
@@ -1405,6 +1462,7 @@ app.get("/admin/logs/stream", (req, res) => {
 
   manager.events.on("log", onLog);
   req.on("close", () => {
+    clearInterval(heartbeatTimer);
     manager.events.off("log", onLog);
     res.end();
   });
@@ -1414,7 +1472,16 @@ app.get("/admin/conversations/stream", (req, res) => {
   res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
   res.setHeader("Cache-Control", "no-cache, no-transform");
   res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
   res.flushHeaders();
+
+  if (req.socket) {
+    req.socket.setTimeout(0);
+  }
+
+  const heartbeatTimer = setInterval(() => {
+    res.write(": heartbeat\n\n");
+  }, 15_000);
 
   const onConversation = (entry: unknown) => {
     res.write(`data: ${JSON.stringify(entry)}\n\n`);
@@ -1422,6 +1489,7 @@ app.get("/admin/conversations/stream", (req, res) => {
 
   manager.events.on("conversation", onConversation);
   req.on("close", () => {
+    clearInterval(heartbeatTimer);
     manager.events.off("conversation", onConversation);
     res.end();
   });
@@ -1487,6 +1555,15 @@ app.use((error: unknown, _req: express.Request, res: express.Response, _next: ex
 
 const { host, port } = manager.getConfig();
 const httpServer = http.createServer(app);
+
+// Disable Node.js HTTP server idle-timeout defaults so long-lived
+// SSE connections (streaming chat completions / responses) and
+// clients behind reverse proxies are not disconnected prematurely.
+// keepAliveTimeout defaults to 5 s in recent Node — far too short
+// for Gemini's Extended Thinking pause (30–120 s).
+httpServer.keepAliveTimeout = 0;
+httpServer.headersTimeout = 0;
+httpServer.requestTimeout = 0;
 
 function startHttpServer(nextPort: number, attemptsLeft = 20): void {
   const onError = (error: NodeJS.ErrnoException) => {
